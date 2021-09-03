@@ -27,6 +27,11 @@ contract CDS is IERC20 {
         uint256 balance,
         uint256 underlying
     );
+    event WithdrawRequested(
+        address indexed withdrawer,
+        uint256 amount,
+        uint256 time
+    );
     event Withdraw(address indexed withdrawer, uint256 amount, uint256 retVal);
     event Compensated(address indexed index, uint256 amount);
     event Paused(bool paused);
@@ -174,6 +179,7 @@ contract CDS is IERC20 {
         );
         withdrawalReq[msg.sender].timestamp = now;
         withdrawalReq[msg.sender].amount = _amount;
+        emit WithdrawRequested(msg.sender, _amount, now);
     }
 
     /**
@@ -192,9 +198,9 @@ contract CDS is IERC20 {
                 ) <
                 now &&
                 withdrawalReq[msg.sender]
-                .timestamp
-                .add(parameters.getLockup(msg.sender))
-                .add(parameters.getWithdrawable(msg.sender)) >
+                    .timestamp
+                    .add(parameters.getLockup(msg.sender))
+                    .add(parameters.getWithdrawable(msg.sender)) >
                 now &&
                 withdrawalReq[msg.sender].amount >= _amount &&
                 _amount > 0,
