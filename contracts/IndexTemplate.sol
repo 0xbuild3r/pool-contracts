@@ -456,7 +456,7 @@ contract IndexTemplate is IERC20 {
             pendingEnd = now.add(_pending);
         }
         locked = true;
-        event Locked();
+        emit Locked();
     }
 
     /**
