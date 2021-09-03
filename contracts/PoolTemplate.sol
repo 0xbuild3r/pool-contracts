@@ -57,6 +57,7 @@ contract PoolTemplate is IERC20 {
         bytes32[] _targets,
         string _memo
     );
+    event TransferInsurance(uint256 id, address from, address to);
     event CreditIncrease(address indexed depositor, uint256 credit);
     event CreditDecrease(address indexed withdrawer, uint256 credit);
     event MarketStatusChanged(MarketStatus statusValue);
@@ -550,6 +551,7 @@ contract PoolTemplate is IERC20 {
         );
 
         insurance.insured = _to;
+        emit TransferInsurance(_id, msg.sender, _to);
     }
 
     /**
