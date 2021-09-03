@@ -62,6 +62,7 @@ contract PoolTemplate is IERC20 {
     event CreditDecrease(address indexed withdrawer, uint256 credit);
     event MarketStatusChanged(MarketStatus statusValue);
     event Paused(bool paused);
+    event Resumed();
     event MetadataChanged(string metadata);
     /**
      * Storage
@@ -623,6 +624,7 @@ contract PoolTemplate is IERC20 {
         );
         marketStatus = MarketStatus.Trading;
         emit MarketStatusChanged(marketStatus);
+        emit Resumed();
     }
 
     /**

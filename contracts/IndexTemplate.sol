@@ -35,6 +35,8 @@ contract IndexTemplate is IERC20 {
     event Withdraw(address indexed withdrawer, uint256 amount, uint256 retVal);
     event Compensated(address indexed index, uint256 amount);
     event Paused(bool paused);
+    event Resumed();
+    event Locked();
     event MetadataChanged(string metadata);
     event LeverageSet(uint256 target);
     event AllocationSet(address pool, uint256 allocPoint);
@@ -441,6 +443,7 @@ contract IndexTemplate is IERC20 {
     function resume() external {
         require(pendingEnd <= now);
         locked = false;
+        emit Resumed();
     }
 
     /**
@@ -453,6 +456,7 @@ contract IndexTemplate is IERC20 {
             pendingEnd = now.add(_pending);
         }
         locked = true;
+        event Locked();
     }
 
     /**
