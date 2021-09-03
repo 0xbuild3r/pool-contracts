@@ -20,13 +20,7 @@ contract IndexTemplate is IERC20 {
      * EVENTS
      */
 
-    event Deposit(
-        address indexed depositor,
-        uint256 amount,
-        uint256 mint,
-        uint256 balance,
-        uint256 underlying
-    );
+    event Deposit(address indexed depositor, uint256 amount, uint256 mint);
     event WithdrawRequested(
         address indexed withdrawer,
         uint256 amount,
@@ -172,13 +166,7 @@ contract IndexTemplate is IERC20 {
         } else {
             _mintAmount = _add;
         }
-        emit Deposit(
-            msg.sender,
-            _amount,
-            _mintAmount,
-            balanceOf(msg.sender),
-            valueOfUnderlying(msg.sender)
-        );
+        emit Deposit(msg.sender, _amount, _mintAmount);
         //mint iToken
         _mint(msg.sender, _mintAmount);
         adjustAlloc();
