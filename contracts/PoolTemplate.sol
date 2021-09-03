@@ -34,7 +34,8 @@ contract PoolTemplate is IERC20 {
         bytes32 target,
         uint256 startTime,
         uint256 endTime,
-        address insured
+        address insured,
+        uint256 premium
     );
     event Redeemed(
         uint256 indexed id,
@@ -450,7 +451,15 @@ contract PoolTemplate is IERC20 {
             );
         }
 
-        emit Insured(_id, _amount, _target, now, _endTime, msg.sender);
+        emit Insured(
+            _id,
+            _amount,
+            _target,
+            now,
+            _endTime,
+            msg.sender,
+            _premium
+        );
 
         return _id;
     }
