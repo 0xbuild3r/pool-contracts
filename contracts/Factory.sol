@@ -140,14 +140,17 @@ contract Factory {
 
         if (_conditions.length > 0) {
             for (uint256 i = 0; i < _conditions.length; i++) {
-                _conditions[i] = conditionlist[address(template)][i];
+                if (conditionlist[address(template)][i] > 0) {
+                    _conditions[i] = conditionlist[address(template)][i];
+                }
             }
         }
 
         address _owner = owner;
 
-        IUniversalMarket market =
-            IUniversalMarket(_createClone(address(template)));
+        IUniversalMarket market = IUniversalMarket(
+            _createClone(address(template))
+        );
 
         market.initialize(
             _owner,
