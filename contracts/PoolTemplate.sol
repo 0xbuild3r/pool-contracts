@@ -4,8 +4,11 @@ pragma solidity ^0.6.0;
  * @author kohshiba
  * @title InsureDAO pool template contract
  */
+
+import "hardhat/console.sol";
 import "./libraries/math/SafeMath.sol";
 import "./libraries/utils/Address.sol";
+import "./libraries/utils/MerkleProof.sol";
 import "./libraries/tokens/IERC20.sol";
 import "./interfaces/IParameters.sol";
 import "./interfaces/IVault.sol";
@@ -49,7 +52,8 @@ contract PoolTemplate is IERC20 {
         uint256 _payoutNumerator,
         uint256 _payoutDenominator,
         uint256 _incidentTimestamp,
-        bytes32[] _targets,
+        bytes32 _merkleRoot,
+        bytes32[] _rawdata,
         string _memo
     );
     event TransferInsurance(uint256 id, address from, address to);
@@ -128,7 +132,7 @@ contract PoolTemplate is IERC20 {
         uint256 payoutNumerator;
         uint256 payoutDenominator;
         uint256 incidentTimestamp;
-        bytes32[] targets;
+        bytes32 targets;
     }
     Incident public incident;
 
@@ -467,26 +471,25 @@ contract PoolTemplate is IERC20 {
     /**
      * @notice Redeem an insurance policy
      */
-    function redeem(uint256 _id) external {
+    function redeem(uint256 _id, bytes32[] calldata _merkleProof) external {
         Insurance storage insurance = insurances[_id];
 
         uint256 _payoutNumerator = incident.payoutNumerator;
         uint256 _payoutDenominator = incident.payoutDenominator;
         uint256 _incidentTimestamp = incident.incidentTimestamp;
-        bytes32[] memory _targets = incident.targets;
-        bool isTarget;
-
-        for (uint256 i = 0; i < _targets.length; i++) {
-            if (_targets[i] == insurance.target) isTarget = true;
-        }
-
+        bytes32 _targets = incident.targets;
+        bytes32 _temp = insurance.target;
         require(
             insurance.status == true &&
                 insurance.insured == msg.sender &&
                 marketStatus == MarketStatus.Payingout &&
                 insurance.startTime <= _incidentTimestamp &&
                 insurance.endTime >= _incidentTimestamp &&
-                isTarget == true,
+                MerkleProof.verify(
+                    _merkleProof,
+                    _targets,
+                    keccak256(abi.encodePacked(insurance.target))
+                ),
             "ERROR: INSURANCE_NOT_APPLICABLE"
         );
         insurance.status = false;
@@ -582,7 +585,8 @@ contract PoolTemplate is IERC20 {
         uint256 _payoutNumerator,
         uint256 _payoutDenominator,
         uint256 _incidentTimestamp,
-        bytes32[] calldata _targets,
+        bytes32 _merkleRoot,
+        bytes32[] calldata _rawdata,
         string calldata _memo
     ) external onlyOwner {
         require(
@@ -592,7 +596,7 @@ contract PoolTemplate is IERC20 {
         incident.payoutNumerator = _payoutNumerator;
         incident.payoutDenominator = _payoutDenominator;
         incident.incidentTimestamp = _incidentTimestamp;
-        incident.targets = _targets;
+        incident.targets = _merkleRoot;
         marketStatus = MarketStatus.Payingout;
         pendingEnd = now.add(_pending);
         for (uint256 i = 0; i < indexList.length; i++) {
@@ -605,7 +609,8 @@ contract PoolTemplate is IERC20 {
             _payoutNumerator,
             _payoutDenominator,
             _incidentTimestamp,
-            _targets,
+            _merkleRoot,
+            _rawdata,
             _memo
         );
         emit MarketStatusChanged(marketStatus);
@@ -897,13 +902,6 @@ contract PoolTemplate is IERC20 {
      */
     function totalLiquidity() public view returns (uint256 _balance) {
         return vault.attributionValue(totalAttributions).add(totalCredit);
-    }
-
-    /**
-     * @notice Get payout target arrays for frontend / external contracts
-     */
-    function getPayoutTargets() external view returns (bytes32[] memory) {
-        return incident.targets;
     }
 
     /**
