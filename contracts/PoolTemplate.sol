@@ -5,7 +5,6 @@ pragma solidity ^0.6.0;
  * @title InsureDAO pool template contract
  */
 
-import "hardhat/console.sol";
 import "./libraries/math/SafeMath.sol";
 import "./libraries/utils/Address.sol";
 import "./libraries/utils/MerkleProof.sol";
@@ -123,10 +122,15 @@ contract PoolTemplate is IERC20 {
         uint256 amount;
         bytes32 target;
         address insured;
-        bool status;
+        InsuranceStatus status;
     }
     Insurance[] public insurances;
     mapping(address => uint256[]) public insuranceHoldings;
+    enum InsuranceStatus {
+        Active,
+        Redeemed,
+        Unlocked
+    }
 
     struct Incident {
         uint256 payoutNumerator;
@@ -297,12 +301,12 @@ contract PoolTemplate is IERC20 {
     function unlock(uint256 _id) public {
         Insurance storage insurance = insurances[_id];
         require(
-            insurance.status == true &&
+            insurance.status == InsuranceStatus.Active &&
                 marketStatus == MarketStatus.Trading &&
                 insurance.endTime.add(parameters.getGrace(msg.sender)) < now,
             "ERROR: UNLOCK_BAD_COINDITIONS"
         );
-        insurance.status == false;
+        insurance.status = InsuranceStatus.Unlocked;
 
         lockedAmount = lockedAmount.sub(insurance.amount);
 
@@ -437,7 +441,7 @@ contract PoolTemplate is IERC20 {
             _amount,
             _target,
             msg.sender,
-            true
+            InsuranceStatus.Active
         );
         insurances.push(_insurance);
         insuranceHoldings[msg.sender].push(_id);
@@ -480,7 +484,7 @@ contract PoolTemplate is IERC20 {
         bytes32 _targets = incident.targets;
         bytes32 _temp = insurance.target;
         require(
-            insurance.status == true &&
+            insurance.status == InsuranceStatus.Active &&
                 insurance.insured == msg.sender &&
                 marketStatus == MarketStatus.Payingout &&
                 insurance.startTime <= _incidentTimestamp &&
@@ -492,7 +496,7 @@ contract PoolTemplate is IERC20 {
                 ),
             "ERROR: INSURANCE_NOT_APPLICABLE"
         );
-        insurance.status = false;
+        insurance.status = InsuranceStatus.Redeemed;
         lockedAmount = lockedAmount.sub(insurance.amount);
 
         uint256 _payoutAmount = insurance.amount.mul(_payoutNumerator).div(
@@ -547,7 +551,7 @@ contract PoolTemplate is IERC20 {
             _to != address(0) &&
                 insurance.insured == msg.sender &&
                 insurance.endTime >= now &&
-                insurance.status == true,
+                insurance.status == InsuranceStatus.Active,
             "ERROR: INSURANCE_TRANSFER_BAD_CONDITIONS"
         );
 
