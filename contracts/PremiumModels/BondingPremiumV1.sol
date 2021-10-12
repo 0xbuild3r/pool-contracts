@@ -1,5 +1,17 @@
 pragma solidity 0.8.7;
 
+/***
+*@title BondingPremiumV1
+*@author InsureDAO
+* SPDX-License-Identifier: MIT
+*@notice Calculate premium to purchase insurance.
+*/
+
+/**
+* Premium Model Explanation: https://insuredao.gitbook.io/insuredao/advanced/premium-pricing
+* Interactive Graph: https://www.desmos.com/calculator/2ozvkauajc
+*/
+
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract BondingPremiumV1 {
@@ -27,55 +39,18 @@ contract BondingPremiumV1 {
     }
 
     /***
-     * -- Fondamental Equation f(x)--
-     * (x-a)(y-a) = k
-     *
-     * f(x) = k/(x-a)+a
-     * f(x) pass through (1000000, 0) (0, 1000000)
-     *
-     * Using Quadratic Formula,
-     * a = (1e6 - sqrt(1e6^2+4k))/2
-     *
-     * use below instead of above to avoid negative value.
-     * -a  = (1e6 + sqrt(1e6^2+4k))/2 - 1e6
-     * f(x) = k/(x+a)-a
-     *
-     * --Yearly Premium Equation g(x)--
-     * g(x) = f(x)*365 + b
-     *      = 365(k/(x+a)-a)+b
-     * x = 1e6 - Utilization Rate
-     *
-     * Premium%
-     * |
-     * \
-     * ||
-     * |\
-     * | \-_
-     * |    \-_
-     * |       \-____
-     * |-------------\------->LP left%
-     * f(x) is like uniswap bonding curve which is customized so that it crrosses over axis at the point (1000000, 0) (0,1000000)
-     * Base rate is applied addition to this.
-     *
-     * -- Initial Parameters --
-     * k = 300100000
-     * b = 30000
-     * => a=300
-     *
-     * //Apply lower base_fee for low risk insurance.
-     * low_risk_b = 5000 //0.5%
-     * low_risk_border = uint256(1e24) //1M USDC
+     * @notice Set a initial parameters.
+     *         you can see this model's graph here https://www.desmos.com/calculator/2ozvkauajc
      */
-
-    constructor() public {
-        //setPremium()
+    constructor() {
+        //setPremium
         b = 30000;
         k = 300100000;
         a = (
             uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
         ).div(2).sub(uint256(1e6));
 
-        //setOptions()
+        //setPremium2
         low_risk_b = 5000; //0.5%
         low_risk_liquidity = uint256(1e12); //1M USDC (6 decimals)
         low_risk_util = 150000; //15% utilization
@@ -83,6 +58,11 @@ contract BondingPremiumV1 {
         owner = msg.sender;
     }
 
+    /**
+     * @notice Get yearly premium rate. This returns percentage in form of 1e5. (100000 = 100.000%)
+     * @param _totalLiquidity total liquidity token amount in the insurance pool.
+     * @param _lockedAmount utilized token amount of the insurance pool.
+     */
     function getPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
         public
         view
@@ -116,6 +96,11 @@ contract BondingPremiumV1 {
         return _premiumRate;
     }
 
+    /**
+     * @notice Get premium. This returns token amount of premium buyer has to pay.
+     * @param _totalLiquidity total liquidity token amount in the insurance pool.
+     * @param _lockedAmount utilized token amount of the insurance pool.
+     */
     function getPremium(
         uint256 _amount,
         uint256 _term,
@@ -126,23 +111,23 @@ contract BondingPremiumV1 {
             return 0;
         }
 
-        uint256 pi = getPremiumRate(_totalLiquidity, _lockedAmount); //100.000% 1e5
-        uint256 pf = getPremiumRate(
-            _totalLiquidity,
-            _lockedAmount.add(_amount)
-        ); //100.000% 1e5
+        uint256 pi = getPremiumRate(_totalLiquidity, _lockedAmount);
+        uint256 pf = getPremiumRate(_totalLiquidity, _lockedAmount.add(_amount));
 
+        //calc approximate area on the graph.
         uint256 premium_1 = _amount.mul(pi);
         uint256 premium_2 = _amount.mul(pf.sub(pi).div(2));
         uint256 _premium = premium_1.add(premium_2);
 
+        //change yearly premium to the premium of arbitrary period
         _premium = _premium.mul(_term).div(365 days).div(1e5);
 
         return _premium;
     }
 
+
     /**
-     * @notice Set a premium model
+     * @notice Set a premium model. This changes the shape of the graph.
      * @param _baseRatePerYear The Base rate addition to the bonding curve. (scaled by 1e5)
      * @param _multiplierPerYear The rate of mixmum premium(scaled by 1e5)
      */
@@ -157,13 +142,15 @@ contract BondingPremiumV1 {
         ).div(2).sub(uint256(1e6));
     }
 
+
     /***
-     * @notice Set optional parameters
+     * @notice Set optional parameters. 
      * @param _a low_risk_border
      * @param _b low_risk_b
      * @param _c low_risk_util
+     * @param _d won't be used in this model
      */
-    function setOptions(
+    function setPremium2(
         uint256 _a,
         uint256 _b,
         uint256 _c,
@@ -176,6 +163,7 @@ contract BondingPremiumV1 {
         low_risk_util = _c;
     }
 
+    
     function sqrt(uint256 x) internal pure returns (uint256 y) {
         uint256 z = (x + 1) / 2;
         y = x;
