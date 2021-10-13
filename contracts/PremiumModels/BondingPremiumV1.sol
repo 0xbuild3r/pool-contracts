@@ -1,15 +1,15 @@
 pragma solidity 0.8.7;
 
 /***
-*@title BondingPremiumV1
-*@author InsureDAO
+* @title BondingPremiumV1
+* @author InsureDAO
 * SPDX-License-Identifier: MIT
-*@notice Calculate premium to purchase insurance.
+* @notice Calculate premium to purchase insurance.
 */
 
 /**
 * Premium Model Explanation: https://insuredao.gitbook.io/insuredao/advanced/premium-pricing
-* Interactive Graph: https://www.desmos.com/calculator/2ozvkauajc
+* Interactive Graph: https://www.desmos.com/calculator/zrusmh2gto
 */
 
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
@@ -17,40 +17,35 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 contract BondingPremiumV1 {
     using SafeMath for uint256;
 
-    event CommitNewAdmin(uint256 deadline, address future_admin);
-    event NewAdmin(address admin);
+    event CommitOwnership(address future_owner);
+    event AcceptOwnership(address owner);
 
-    uint256 public k; //k
-    uint256 public b; //b
-    uint256 public a; //a
+    uint256 public k; //k in the formula. Constant
+    uint256 public b; //b in the formula. Yearly Base fee percentage. (1000000 = 100%)
+    uint256 public a; //a in the formula. depending on k
 
-    uint256 public low_risk_util; //expressed in util rate
-    uint256 public low_risk_liquidity; //expressed in total liquidity amount
-    uint256 public low_risk_b;
+    uint256 public low_risk_util; //util rate requirement to apply low_risk_b
+    uint256 public low_risk_liquidity; //total liquidity amount requirement to apply low_risk_b
+    uint256 public low_risk_b; //lower base fee for huge insurance pool.
 
     address public owner;
     address public future_owner;
-    uint256 public transfer_ownership_deadline;
-    uint256 public constant ADMIN_ACTIONS_DELAY = 3 * 86400;
 
     modifier onlyOwner() {
-        require(isOwner(), "Restricted: caller is not allowed to operate");
+        require(msg.sender == owner, "Restricted: caller is not allowed to operate");
         _;
     }
 
     /***
-     * @notice Set a initial parameters.
-     *         you can see this model's graph here https://www.desmos.com/calculator/2ozvkauajc
-     */
+    * @notice Set a initial parameters. You can see this model's graph here https://www.desmos.com/calculator/zrusmh2gto
+    */
     constructor() {
-        //setPremium
-        b = 30000;
+        b = 30000; //3%
         k = 300100000;
         a = (
             uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
         ).div(2).sub(uint256(1e6));
 
-        //setPremium2
         low_risk_b = 5000; //0.5%
         low_risk_liquidity = uint256(1e12); //1M USDC (6 decimals)
         low_risk_util = 150000; //15% utilization
@@ -59,10 +54,10 @@ contract BondingPremiumV1 {
     }
 
     /**
-     * @notice Get yearly premium rate. This returns percentage in form of 1e5. (100000 = 100.000%)
-     * @param _totalLiquidity total liquidity token amount in the insurance pool.
-     * @param _lockedAmount utilized token amount of the insurance pool.
-     */
+    * @notice Get yearly premium rate. This returns percentage in form of 1e5. (100000 = 100.000%)
+    * @param _totalLiquidity total liquidity token amount in the insurance pool.
+    * @param _lockedAmount utilized token amount of the insurance pool.
+    */
     function getPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
         public
         view
@@ -97,10 +92,10 @@ contract BondingPremiumV1 {
     }
 
     /**
-     * @notice Get premium. This returns token amount of premium buyer has to pay.
-     * @param _totalLiquidity total liquidity token amount in the insurance pool.
-     * @param _lockedAmount utilized token amount of the insurance pool.
-     */
+    * @notice Get premium. This returns token amount of premium buyer has to pay.
+    * @param _totalLiquidity total liquidity token amount in the insurance pool.
+    * @param _lockedAmount utilized token amount of the insurance pool.
+    */
     function getPremium(
         uint256 _amount,
         uint256 _term,
@@ -114,7 +109,7 @@ contract BondingPremiumV1 {
         uint256 pi = getPremiumRate(_totalLiquidity, _lockedAmount);
         uint256 pf = getPremiumRate(_totalLiquidity, _lockedAmount.add(_amount));
 
-        //calc approximate area on the graph.
+        //calc approximate area on the graph. See https://www.desmos.com/calculator/zrusmh2gto
         uint256 premium_1 = _amount.mul(pi);
         uint256 premium_2 = _amount.mul(pf.sub(pi).div(2));
         uint256 _premium = premium_1.add(premium_2);
@@ -127,10 +122,10 @@ contract BondingPremiumV1 {
 
 
     /**
-     * @notice Set a premium model. This changes the shape of the graph.
-     * @param _baseRatePerYear The Base rate addition to the bonding curve. (scaled by 1e5)
-     * @param _multiplierPerYear The rate of mixmum premium(scaled by 1e5)
-     */
+    * @notice Set a premium model. This changes the shape of the graph.
+    * @param _baseRatePerYear The Base rate addition to the bonding curve. (scaled by 1e5)
+    * @param _multiplierPerYear The rate of mixmum premium(scaled by 1e5)
+    */
     function setPremium(uint256 _baseRatePerYear, uint256 _multiplierPerYear)
         external
         onlyOwner
@@ -144,12 +139,12 @@ contract BondingPremiumV1 {
 
 
     /***
-     * @notice Set optional parameters. 
-     * @param _a low_risk_border
-     * @param _b low_risk_b
-     * @param _c low_risk_util
-     * @param _d won't be used in this model
-     */
+    * @notice Set optional parameters. 
+    * @param _a low_risk_border
+    * @param _b low_risk_b
+    * @param _c low_risk_util
+    * @param _d won't be used in this model
+    */
     function setPremium2(
         uint256 _a,
         uint256 _b,
@@ -163,7 +158,8 @@ contract BondingPremiumV1 {
         low_risk_util = _c;
     }
 
-    
+
+    //square root
     function sqrt(uint256 x) internal pure returns (uint256 y) {
         uint256 z = (x + 1) / 2;
         y = x;
@@ -173,37 +169,26 @@ contract BondingPremiumV1 {
         }
     }
 
-    function getOwner() public view returns (address) {
-        return owner;
+
+    function commit_transfer_ownership(address addr)external {
+        /***
+        *@notice Transfer ownership of GaugeController to `addr`
+        *@param addr Address to have ownership transferred to
+        */
+        require (msg.sender == owner, "dev: admin only");
+        future_owner = addr;
+        emit CommitOwnership(addr);
     }
 
-    function isOwner() public view returns (bool) {
-        return msg.sender == owner;
-    }
+    function accept_transfer_ownership()external {
+        /***
+        *@notice Accept a transfer of ownership
+        *@return bool success
+        */
+        require(address(msg.sender) == future_owner, "dev: future_admin only");
 
-    function commitTransferOwnership(address _owner) external onlyOwner {
-        require(transfer_ownership_deadline == 0, "dev: active transfer");
-        require(_owner != address(0), "dev: address zero");
+        owner = future_owner;
 
-        uint256 _deadline = block.timestamp.add(ADMIN_ACTIONS_DELAY);
-        transfer_ownership_deadline = _deadline;
-        future_owner = _owner;
-
-        emit CommitNewAdmin(_deadline, _owner);
-    }
-
-    function applyTransferOwnership() external onlyOwner {
-        require(
-            block.timestamp >= transfer_ownership_deadline,
-            "dev: insufficient time"
-        );
-        require(transfer_ownership_deadline != 0, "dev: no active transfer");
-
-        transfer_ownership_deadline = 0;
-        address _owner = future_owner;
-
-        owner = _owner;
-
-        emit NewAdmin(owner);
+        emit AcceptOwnership(owner);
     }
 }
