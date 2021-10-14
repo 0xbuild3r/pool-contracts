@@ -12,6 +12,10 @@ pragma solidity 0.8.7;
 * Interactive Graph: https://www.desmos.com/calculator/zrusmh2gto
 */
 
+/***
+* @dev only applicable for USDC (6 decimals)
+*/
+
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 
 contract BondingPremiumV1 {
@@ -110,8 +114,8 @@ contract BondingPremiumV1 {
         uint256 pf = getPremiumRate(_totalLiquidity, _lockedAmount.add(_amount));
 
         //calc approximate area on the graph. See https://www.desmos.com/calculator/zrusmh2gto
-        uint256 premium_1 = _amount.mul(pi);
-        uint256 premium_2 = _amount.mul(pf.sub(pi).div(2));
+        uint256 premium_1 = _amount.mul(pi); //calc rectangle area
+        uint256 premium_2 = _amount.mul(pf.sub(pi).div(2)); //calc triangle area
         uint256 _premium = premium_1.add(premium_2);
 
         //change yearly premium to the premium of arbitrary period
