@@ -35,6 +35,9 @@ contract BondingPremiumV1 {
     address public owner;
     address public future_owner;
 
+    uint256 BASE_DIGITS = uint256(1e6); //bonding curve graph takes 1e6 as 100.0000%
+    uint256 DIGITS_ADJUSTER = uint256(10);
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Restricted: caller is not allowed to operate");
         _;
@@ -47,8 +50,8 @@ contract BondingPremiumV1 {
         b = 30000; //3%
         k = 300100000;
         a = (
-            uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
-        ).div(2).sub(uint256(1e6));
+            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
+        ).div(2).sub(BASE_DIGITS);//quadratic formula
 
         low_risk_b = 5000; //0.5%
         low_risk_liquidity = uint256(1e12); //1M USDC (6 decimals)
@@ -73,7 +76,7 @@ contract BondingPremiumV1 {
         // yearly premium rate
         uint256 _premiumRate;
 
-        uint256 Q = uint256(1e6).sub(_util).add(a); //(x+a)
+        uint256 Q = BASE_DIGITS.sub(_util).add(a); //(x+a)
         if (_util < low_risk_util && _totalLiquidity > low_risk_liquidity) {
             //utilizatio < 10% && totalliquidity > low_risk_border (easily acomplished if leverage applied)
             _premiumRate = k
@@ -137,8 +140,8 @@ contract BondingPremiumV1 {
         b = _baseRatePerYear;
         k = _multiplierPerYear;
         a = (
-            uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
-        ).div(2).sub(uint256(1e6));
+            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
+        ).div(2).sub(BASE_DIGITS);
     }
 
 
@@ -174,7 +177,7 @@ contract BondingPremiumV1 {
     }
 
 
-    function commit_transfer_ownership(address addr)external {
+    function commitTransferOwnership(address addr)external {
         /***
         *@notice Transfer ownership of GaugeController to `addr`
         *@param addr Address to have ownership transferred to
@@ -184,11 +187,12 @@ contract BondingPremiumV1 {
         emit CommitOwnership(addr);
     }
 
-    function accept_transfer_ownership()external {
+    function acceptTransferOwnership()external {
         /***
         *@notice Accept a transfer of ownership
         *@return bool success
         */
+        require(future_owner != address(0), "dev: no active transfer");
         require(address(msg.sender) == future_owner, "dev: future_admin only");
 
         owner = future_owner;

@@ -8,8 +8,8 @@ contract BondingPremiumV2 {
 
     ABDKMath64x64 calculator;
 
-    event CommitNewAdmin(uint256 deadline, address future_admin);
-    event NewAdmin(address admin);
+    event CommitOwnership(address future_owner);
+    event AcceptOwnership(address owner);
 
     uint256 public k; //k
     uint256 public b; //b
@@ -21,56 +21,13 @@ contract BondingPremiumV2 {
 
     address public owner;
     address public future_owner;
-    uint256 public transfer_ownership_deadline;
-    uint256 public constant ADMIN_ACTIONS_DELAY = 3 * 86400;
 
     modifier onlyOwner() {
-        require(isOwner(), "Ownable: caller is not the owner");
+        require(msg.sender == owner, "Restricted: caller is not allowed to operate");
         _;
     }
 
-    /***
-     * -- Fondamental Equation f(x)--
-     * (x-a)(y-a) = k
-     *
-     * f(x) = k/(x-a)+a
-     * f(x) pass through (1000000, 0) (0, 1000000)
-     *
-     * Using Quadratic Formula,
-     * a = (1e6 - sqrt(1e6^2+4k))/2
-     *
-     * use below instead of above to avoid negative value.
-     * -a  = (1e6 + sqrt(1e6^2+4k))/2 - 1e6
-     * f(x) = k/(x+a)-a
-     *
-     * --Yearly Premium Equation g(x)--
-     * g(x) = f(x)*365 + b
-     *      = 365(k/(x+a)-a)+b
-     * x = 1e6 - Utilization Rate
-     *
-     * Premium%
-     * |
-     * \
-     * ||
-     * |\
-     * | \-_
-     * |    \-_
-     * |       \-____
-     * |-------------\------->LP left%
-     * f(x) is like uniswap bonding curve which is customized so that it crrosses over axis at the point (1000000, 0) (0,1000000)
-     * Base rate is applied addition to this.
-     *
-     * -- Initial Parameters --
-     * k = 300100000
-     * b = 30000
-     * => a=300
-     *
-     * //Apply lower base_fee for low risk insurance.
-     * low_risk_b = 5000 //0.5%
-     * low_risk_border = uint256(1e24) //1M USDC
-     */
-
-    constructor(address _calculator) public {
+    constructor(address _calculator) {
         calculator = ABDKMath64x64(_calculator);
         
         //setPremium()
@@ -224,38 +181,25 @@ contract BondingPremiumV2 {
         }
     }
 
-    function get_owner() public view returns (address) {
-        return owner;
+    function commitTransferOwnership(address addr)external {
+        /***
+        *@notice Transfer ownership of GaugeController to `addr`
+        *@param addr Address to have ownership transferred to
+        */
+        require (msg.sender == owner, "dev: admin only");
+        future_owner = addr;
+        emit CommitOwnership(addr);
     }
 
-    function isOwner() public view returns (bool) {
-        return msg.sender == owner;
-    }
+    function acceptTransferOwnership()external {
+        /***
+        *@notice Accept a transfer of ownership
+        *@return bool success
+        */
+        require(address(msg.sender) == future_owner, "dev: future_admin only");
 
-    function commit_transfer_ownership(address _owner) external {
-        require(msg.sender == owner, "dev: only owner");
-        require(transfer_ownership_deadline == 0, "dev: active transfer");
+        owner = future_owner;
 
-        uint256 _deadline = block.timestamp.add(ADMIN_ACTIONS_DELAY);
-        transfer_ownership_deadline = _deadline;
-        future_owner = _owner;
-
-        emit CommitNewAdmin(_deadline, _owner);
-    }
-
-    function apply_transfer_ownership() external {
-        require(msg.sender == owner, "dev: only owner");
-        require(
-            block.timestamp >= transfer_ownership_deadline,
-            "dev: insufficient time"
-        );
-        require(transfer_ownership_deadline != 0, "dev: no active transfer");
-
-        transfer_ownership_deadline = 0;
-        address _owner = future_owner;
-
-        owner = _owner;
-
-        emit NewAdmin(owner);
+        emit AcceptOwnership(owner);
     }
 }

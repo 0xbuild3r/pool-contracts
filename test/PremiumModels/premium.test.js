@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { BigNumber } = require("ethers");
 
-describe.skip("test BondingPremium", () => {
+describe("test BondingPremium", () => {
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
   const ten_to_the_18 = BigNumber.from("1000000000000000000");
   const ten_to_the_6 = BigNumber.from("1000000");

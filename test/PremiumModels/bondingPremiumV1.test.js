@@ -83,8 +83,8 @@ describe("test BondingPremium", () => {
     });
   });
 
-  describe("test setOptions", function () {
-    it("setOptions correctly", async () => {
+  describe("test setPremium2", function () {
+    it("setPremium2 correctly", async () => {
       //initial value
       let low_risk_b = BigNumber.from("5000");
       let low_risk_liquidity = BigNumber.from("1000000000000");
@@ -99,7 +99,7 @@ describe("test BondingPremium", () => {
       low_risk_liquidity = BigNumber.from("102544520000000");
       low_risk_util = BigNumber.from("121400");
 
-      await premium.setOptions(
+      await premium.setPremium2(
         low_risk_liquidity,
         low_risk_b,
         low_risk_util,
@@ -111,15 +111,15 @@ describe("test BondingPremium", () => {
       expect(await premium.low_risk_util()).to.equal(low_risk_util);
     });
 
-    it("revert setOptions", async () => {
+    it("revert setPremium2", async () => {
       //new value
       low_risk_b = BigNumber.from("4000030");
 
-      await expect(premium.setOptions(0, low_risk_b, 0, 0)).to.revertedWith(
+      await expect(premium.setPremium2(0, low_risk_b, 0, 0)).to.revertedWith(
         "low_risk_base_fee must lower than base_fee"
       );
       await expect(
-        premium.connect(alice).setOptions(0, 0, 0, 0)
+        premium.connect(alice).setPremium2(0, 0, 0, 0)
       ).to.revertedWith("Restricted: caller is not allowed to operate");
     });
   });
@@ -230,13 +230,15 @@ describe("test BondingPremium", () => {
     it("test_commit_owner_only", async () => {
       await expect(
         premium.connect(alice).commitTransferOwnership(alice.address)
-      ).to.revertedWith("Restricted: caller is not allowed to operate");
+      ).to.revertedWith("dev: admin only");
     });
 
-    it("test_apply_owner_only", async () => {
+    it("test_accept_owner_only", async () => {
+      await premium.commitTransferOwnership(alice.address);
+
       await expect(
-        premium.connect(alice).applyTransferOwnership()
-      ).to.revertedWith("Restricted: caller is not allowed to operate");
+        premium.acceptTransferOwnership()
+      ).to.revertedWith("dev: future_admin only");
     });
 
     //test
@@ -247,17 +249,16 @@ describe("test BondingPremium", () => {
       expect(await premium.future_owner()).to.equal(alice.address);
     });
 
-    it("test_applyTransferOwnership", async () => {
+    it("test_acceptTransferOwnership", async () => {
       await premium.commitTransferOwnership(alice.address);
-      await ethers.provider.send("evm_increaseTime", [86400 * 4]);
-      await premium.applyTransferOwnership();
+      await premium.connect(alice).acceptTransferOwnership();
 
       expect(await premium.owner()).to.equal(alice.address);
       expect(await premium.future_owner()).to.equal(alice.address);
     });
 
     it("test_apply_without_commit", async () => {
-      await expect(premium.applyTransferOwnership()).to.revertedWith(
+      await expect(premium.acceptTransferOwnership()).to.revertedWith(
         "dev: no active transfer"
       );
     });
