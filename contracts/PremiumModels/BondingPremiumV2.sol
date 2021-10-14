@@ -202,7 +202,7 @@ contract BondingPremiumV2 {
      * @param _b low_risk_b
      * @param _c low_risk_util
      */
-    function setOptions(
+    function setPremium2(
         uint256 _a,
         uint256 _b,
         uint256 _c,
