@@ -22,6 +22,9 @@ contract BondingPremiumV2 {
     address public owner;
     address public future_owner;
 
+    uint256 BASE_DIGITS = uint256(1e6); //bonding curve graph takes 1e6 as 100.0000%
+    uint256 DIGITS_ADJUSTER = uint256(10);
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Restricted: caller is not allowed to operate");
         _;
@@ -34,10 +37,10 @@ contract BondingPremiumV2 {
         b = 30000;
         k = 300100000;
         a = (
-            uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
+            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
         )
         .div(2)
-        .sub(uint256(1e6));
+        .sub(BASE_DIGITS);
 
         //setOptions()
         low_risk_b = 5000; //0.5%
@@ -58,7 +61,7 @@ contract BondingPremiumV2 {
         // yearly premium rate
         uint256 _premiumRate;
 
-        uint256 Q = uint256(1e6).sub(_util).add(a); //(x+a)
+        uint256 Q = BASE_DIGITS.sub(_util).add(a); //(x+a)
         if (_util < low_risk_util && _totalLiquidity > low_risk_liquidity) {
             //utilizatio < 10% && totalliquidity > low_risk_border (easily acomplished if leverage applied)
             _premiumRate = k
@@ -66,14 +69,14 @@ contract BondingPremiumV2 {
             .sub(Q.mul(a).mul(365))
             .add(Q.mul(low_risk_b))
             .div(Q)
-            .div(10); //change 100.0000% to 100.000%
+            .div(DIGITS_ADJUSTER); //change 100.0000% to 100.000%
         } else {
             _premiumRate = k
             .mul(365)
             .sub(Q.mul(a).mul(365))
             .add(Q.mul(b))
             .div(Q)
-            .div(10); //change 100.0000% to 100.000%
+            .div(DIGITS_ADJUSTER); //change 100.0000% to 100.000%
         }
 
         //Return premium
@@ -147,10 +150,10 @@ contract BondingPremiumV2 {
         b = _baseRatePerYear;
         k = _multiplierPerYear;
         a = (
-            uint256(1e6).add(sqrt(uint256(1e6).mul(uint256(1e6)).add(k.mul(4))))
+            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
         )
         .div(2)
-        .sub(uint256(1e6));
+        .sub(BASE_DIGITS);
     }
 
     /***
