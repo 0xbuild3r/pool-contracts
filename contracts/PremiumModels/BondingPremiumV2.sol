@@ -4,7 +4,7 @@ pragma solidity 0.8.7;
 * @title BondingPremiumV2
 * @author InsureDAO
 * SPDX-License-Identifier: MIT
-* @notice Calculate premium to purchase insurance.
+* @notice Calculate premium to purchase insurance. low_risk_fee assumes only USDC.
 */
 
 /**
@@ -43,26 +43,25 @@ contract BondingPremiumV2 {
     }
 
     constructor(address _calculator) {
+        require(_calculator != address(0), "zero address");
+
+        owner = msg.sender;
         calculator = ABDKMath64x64(_calculator);
         
         //setPremium()
-        b = 30000;
+        b = 30000; //3%
         k = 300100000;
-        a = (
-            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
-        )
-        .div(2)
-        .sub(BASE_DIGITS);
+        a = 300; //(BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))).div(2).sub(BASE_DIGITS)
 
-        //setOptions()
-        low_risk_b = 5000; //0.5%
-        low_risk_liquidity = uint256(1e12); //1M USDC (6 decimals)
-        low_risk_util = 150000; //15% utilization
-
-        owner = msg.sender;
+        //not implementing low_risk fee initially
     }
 
-    function getPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
+    /**
+    * @notice Get yearly premium rate. This returns percentage in form of 1e5. (100000 = 100.000%)
+    * @param _totalLiquidity total liquidity token amount in the insurance pool.
+    * @param _lockedAmount utilized token amount of the insurance pool.
+    */
+    function getCurrentPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
         public
         view
         returns (uint256)
@@ -96,36 +95,36 @@ contract BondingPremiumV2 {
     }
 
     // Returns percent value of premium (100 = 1 premium)
-    function getPremiumValue(
+    function getPremiumRate(
         uint256 _amount,
-        uint256 _term,
         uint256 _totalLiquidity,
-        uint256 _lockedAmount,
-        uint256 _b
+        uint256 _lockedAmount
     ) internal view returns (uint256) {
-        
+        /**
+        *@dev implement low_risk_b!
+        */
         if (_amount == 0) {
             return 0;
         }
         
-        uint256 p1 = 1000000;
-        p1 = p1.sub(_lockedAmount.add(_amount).mul(1e6).div(_totalLiquidity));
+        uint256 u1 = BASE_DIGITS.sub(_lockedAmount.mul(1e6).div(_totalLiquidity)); //util rate before. 1000000 = 100.000%
+        uint256 u2 = BASE_DIGITS.sub(_lockedAmount.add(_amount).mul(1e6).div(_totalLiquidity)); //util rate after. 1000000 = 100.000%
         
-        uint256 p2 = 1000000;
-        p2 = p2.sub(_lockedAmount.mul(1e6).div(_totalLiquidity));
-        
-        int128 ln_p1 = calculator.ln(calculator.fromUInt(p1.add(a)));
-        uint256 ln_res_p1 = calculator.mulu(ln_p1, k).mul(365);
-        uint256 _premium_p1 = ln_res_p1.add(_b.mul(p1)).sub(a.mul(365).mul(p1));
-        
-        int128 ln_p2 = calculator.ln(calculator.fromUInt(p2.add(a)));
-        uint256 ln_res_p2 = calculator.mulu(ln_p2, k).mul(365);
-        uint256 _premium_p2 = ln_res_p2.add(_b.mul(p2)).sub(a.mul(365).mul(p2));
+        //calc 0=>u1 area
+        int128 ln_u1 = calculator.ln(calculator.fromUInt(u1.add(a)));
+        uint256 ln_res_u1 = calculator.mulu(ln_u1, k).mul(365);
+        uint256 _premium_u1 = ln_res_u1.add(b.mul(u1)).sub(a.mul(365).mul(u1));
 
-        uint256 _premium = _premium_p2.sub(_premium_p1);
+        //calc 0=>u2 area
+        int128 ln_u2 = calculator.ln(calculator.fromUInt(u2.add(a)));
+        uint256 ln_res_u2 = calculator.mulu(ln_u2, k).mul(365); //365kln(x+a): 10 degits accuracy
+        uint256 _premium_u2 = ln_res_u2.add(b.mul(u2)).sub(a.mul(365).mul(u2)); //365kln(x+a)+(b-365a)x: 10 degits accuracy
+
+        //(u1 area) - (u2 area) = premium rate between u1 and u2
+        uint256 _premium = _premium_u1.sub(_premium_u2);
         
         return _premium;
-    } 
+    }
     
     // Returns token amount for premium
     function getPremium(
@@ -142,12 +141,9 @@ contract BondingPremiumV2 {
         if (_util < low_risk_util && _totalLiquidity > low_risk_liquidity) 
             _b = low_risk_b;
         
-        uint256 premium = getPremiumValue(_amount, _term, _totalLiquidity, _lockedAmount, _b);
+        uint256 premium = getPremiumRate(_amount, _totalLiquidity, _lockedAmount);
         
-        uint256 year = _term.div(365 days);
-        uint256 percent = premium.mul(year);
-        
-        return percent.mul(_totalLiquidity).div(1e12);
+        return _amount.mul(premium).mul(_term).div(365 days).div(1e12);
     }
 
     /**
@@ -161,11 +157,7 @@ contract BondingPremiumV2 {
     {
         b = _baseRatePerYear;
         k = _multiplierPerYear;
-        a = (
-            BASE_DIGITS.add(sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))))
-        )
-        .div(2)
-        .sub(BASE_DIGITS);
+        a = sqrt(BASE_DIGITS.mul(BASE_DIGITS).add(k.mul(4))).sub(BASE_DIGITS).div(2);
     }
 
     /***
@@ -177,8 +169,7 @@ contract BondingPremiumV2 {
     function setPremium2(
         uint256 _a,
         uint256 _b,
-        uint256 _c,
-        uint256 _d
+        uint256 _c
     ) external onlyOwner {
         require(_b < b, "low_risk_base_fee must lower than base_fee");
 
@@ -211,6 +202,7 @@ contract BondingPremiumV2 {
         *@notice Accept a transfer of ownership
         *@return bool success
         */
+        require(future_owner != address(0), "dev: no active transfer");
         require(address(msg.sender) == future_owner, "dev: future_admin only");
 
         owner = future_owner;

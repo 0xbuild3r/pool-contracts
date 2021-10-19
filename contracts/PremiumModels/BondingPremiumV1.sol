@@ -65,7 +65,7 @@ contract BondingPremiumV1 {
     * @param _totalLiquidity total liquidity token amount in the insurance pool.
     * @param _lockedAmount utilized token amount of the insurance pool.
     */
-    function getPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
+    function getCurrentPremiumRate(uint256 _totalLiquidity, uint256 _lockedAmount)
         public
         view
         returns (uint256)
@@ -113,8 +113,8 @@ contract BondingPremiumV1 {
             return 0;
         }
 
-        uint256 pi = getPremiumRate(_totalLiquidity, _lockedAmount);
-        uint256 pf = getPremiumRate(_totalLiquidity, _lockedAmount.add(_amount));
+        uint256 pi = getCurrentPremiumRate(_totalLiquidity, _lockedAmount);
+        uint256 pf = getCurrentPremiumRate(_totalLiquidity, _lockedAmount.add(_amount));
 
         //calc approximate area on the graph. See https://www.desmos.com/calculator/zrusmh2gto
         uint256 premium_1 = _amount.mul(pi); //calc rectangle area

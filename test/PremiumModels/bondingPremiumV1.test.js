@@ -124,12 +124,12 @@ describe("test BondingPremium", () => {
     });
   });
 
-  describe("test getPremiumRate", function () {
-    it("getPremiumRate correctlly", async () => {
+  describe("test getCurrentPremiumRate", function () {
+    it("getCurrentPremiumRate correctlly", async () => {
       let total = BigNumber.from("1000000").mul(ten_to_the_18);
       let locked_amount = BigNumber.from("771863").mul(ten_to_the_18); //77.1863% utilized
 
-      let p_amount = await premium.getPremiumRate(total, locked_amount);
+      let p_amount = await premium.getCurrentPremiumRate(total, locked_amount);
 
       await expect(p_amount).to.equal(BigNumber.from("40000")); //40.000%
     });
