@@ -1,7 +1,19 @@
 pragma solidity 0.8.7;
 
+/***
+* @title BondingPremiumV2
+* @author InsureDAO
+* SPDX-License-Identifier: MIT
+* @notice Calculate premium to purchase insurance.
+*/
+
+/**
+* Premium Model Explanation: https://insuredao.gitbook.io/insuredao/advanced/premium-pricing
+* Interactive Graph: https://www.desmos.com/calculator/urb8toypkh
+*/
+
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "./Calculator.sol";
+import "./ABDKMath64x64.sol";
 
 contract BondingPremiumV2 {
     using SafeMath for uint256;
