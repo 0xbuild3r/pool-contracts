@@ -51,6 +51,14 @@ describe("test BondingPremium", () => {
       await expect(premium.address).to.exist;
     });
 
+    it("deploy fail", async()=>{
+      const Calculator = await ethers.getContractFactory("ABDKMath64x64");
+      const BondignPremium = await ethers.getContractFactory("BondingPremiumV2");
+
+      calc = await Calculator.deploy();
+      await expect(BondignPremium.deploy(ZERO_ADDRESS)).to.revertedWith("zero address");
+    });
+
     it("check parameters", async () => {
       //initial values
       let b = b_initial;
@@ -83,6 +91,21 @@ describe("test BondingPremium", () => {
       let p_amount = await premium.getCurrentPremiumRate(total, locked_amount);
 
       await expect(p_amount).to.equal(BigNumber.from("40000")); //40.000%
+    });
+
+    it("getCurrentPremiumRate correctlly low_risk", async () => {
+      low_risk_b = BigNumber.from("5000"); //0.5%
+      low_risk_liquidity = BigNumber.from("1000000000000"); //1M USDC
+      low_risk_util = BigNumber.from("100000"); //10%
+
+      await premium['setPremium2(uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util);
+      
+      let total = BigNumber.from("1000000").mul(ten_to_the_18);
+      let locked_amount = BigNumber.from("10000").mul(ten_to_the_18); //1% utilized
+
+      let p_amount = await premium.getCurrentPremiumRate(total, locked_amount);
+
+      await expect(p_amount).to.equal(BigNumber.from("610")); //40.000% = 40000, 610 = 0.6%
     });
   });
 
@@ -120,6 +143,92 @@ describe("test BondingPremium", () => {
       await expect(p_amount).to.closeTo(expected, expected.div("100000"), "not precise enough");
 
     });
+
+    it("getPremium correctlly low_risk", async () => {
+      //set low_risk
+      low_risk_b = BigNumber.from("5000"); //0.5%
+      low_risk_liquidity = BigNumber.from("1000000000000"); //1M USDC
+      low_risk_util = BigNumber.from("100000"); //10%
+      await premium['setPremium2(uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util);
+
+
+      let total = BigNumber.from("1000000").mul(ten_to_the_18);
+      let locked_amount = BigNumber.from("0").mul(ten_to_the_18); //0% utilized
+      let amount = BigNumber.from("10000").mul(ten_to_the_18); //amount to buy
+      let length = YEAR;
+
+      let p_amount = await premium.getPremium(
+        amount,
+        length,
+        total,
+        locked_amount
+      );
+      
+      let u1 = BASE_DIGITS.sub(locked_amount.mul(BASE_DIGITS).div(total));
+      let u2 = BASE_DIGITS.sub(locked_amount.add(amount).mul(BASE_DIGITS).div(total));
+
+      let u1_ln = BigNumber.from(String(Math.round(Math.log(u1.add(a_initial))*1000000000000))); //*1e12
+      let u1_premium_left = k_initial.mul(365).mul(u1_ln);
+      let u1_premium_right = low_risk_b.sub(a_initial.mul(365)).mul(u1).mul(ten_to_the_12);//low_risk_b
+      let u1_premium = u1_premium_left.add(u1_premium_right).div(ten_to_the_12);
+
+      let u2_ln = BigNumber.from(String(Math.round(Math.log(u2.add(a_initial))*1000000000000))); //*1e12
+      let u2_premium_left = k_initial.mul(365).mul(u2_ln);
+      let u2_premium_right = low_risk_b.sub(a_initial.mul(365)).mul(u2).mul(ten_to_the_12);//low_risk_b
+      let u2_premium = u2_premium_left.add(u2_premium_right).div(ten_to_the_12);
+
+      let expected = u1_premium.sub(u2_premium).mul(amount).mul(length).div(YEAR).div(ten_to_the_12);
+
+      console.log(p_amount, expected);
+      await expect(p_amount).to.closeTo(expected, expected.div("100000"), "not precise enough");
+
+    });
+
+    it("getPremium amount0", async () => {
+      let total = BigNumber.from("1000000").mul(ten_to_the_18);
+      let locked_amount = BigNumber.from("0").mul(ten_to_the_18); //77.1863% utilized
+      let amount = BigNumber.from("0").mul(ten_to_the_18); //amount to buy
+      let length = YEAR;
+
+      let p_amount = await premium.getPremium(
+        amount,
+        length,
+        total,
+        locked_amount
+      );
+
+      await expect(p_amount).to.equal(0);
+    });
+
+    it("getPremium revert", async () => {
+      let total = BigNumber.from("0").mul(ten_to_the_18);
+      let locked_amount = BigNumber.from("0").mul(ten_to_the_18); //77.1863% utilized
+      let amount = BigNumber.from("0").mul(ten_to_the_18); //amount to buy
+      let length = YEAR;
+
+      await expect(premium.getPremium(
+        amount,
+        length,
+        total,
+        locked_amount
+      )).revertedWith("_totalLiquidity cannnot be 0");
+    });
+
+    it("getPremium revert", async () => {
+      let total = BigNumber.from("10").mul(ten_to_the_18);
+      let locked_amount = BigNumber.from("11").mul(ten_to_the_18); //77.1863% utilized
+      let amount = BigNumber.from("0").mul(ten_to_the_18); //amount to buy
+      let length = YEAR;
+
+      await expect(premium.getPremium(
+        amount,
+        length,
+        total,
+        locked_amount
+      )).revertedWith("Amount exceeds.");
+    });
+
+
   });
 
   describe("test setPremium", function () {

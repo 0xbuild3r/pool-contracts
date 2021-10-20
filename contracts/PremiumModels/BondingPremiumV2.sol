@@ -35,6 +35,7 @@ contract BondingPremiumV2 {
     address public future_owner;
 
     uint256 BASE_DIGITS = uint256(1e6); //bonding curve graph takes 1e6 as 100.0000%
+    uint256 BASE_DIGITS_x2 = uint256(1e12);
     uint256 DIGITS_ADJUSTER = uint256(10);
 
     modifier onlyOwner() {
@@ -67,7 +68,7 @@ contract BondingPremiumV2 {
         returns (uint256)
     {
         // utilization rate (0~1000000)
-        uint256 _util = _lockedAmount.mul(1e6).div(_totalLiquidity);
+        uint256 _util = _lockedAmount.mul(BASE_DIGITS).div(_totalLiquidity);
 
         // yearly premium rate
         uint256 _premiumRate;
@@ -94,39 +95,51 @@ contract BondingPremiumV2 {
         return _premiumRate;
     }
 
-    // Returns percent value of premium (100 = 1 premium)
+    /***
+    * @notice Get premium rate.
+    * @param _amount 
+    * @param _totalLiquidity total liquidity token amount in the insurance pool.
+    * @param _lockedAmount utilized token amount of the insurance pool.
+    * @dev This returns value without divides by BASE_DEGITS to keep precision. have to devide by BASE_DEGITS at last of getPremium().
+    */
     function getPremiumRate(
         uint256 _amount,
         uint256 _totalLiquidity,
         uint256 _lockedAmount
-    ) internal view returns (uint256) {
-        /**
-        *@dev implement low_risk_b!
-        */
-        if (_amount == 0) {
-            return 0;
-        }
+    ) public view returns (uint256) {
+
+        uint256 _util = _lockedAmount.mul(BASE_DIGITS).div(_totalLiquidity);
+            
+        uint256 _b = b;
+        if (_util < low_risk_util && _totalLiquidity > low_risk_liquidity) 
+            _b = low_risk_b;
         
-        uint256 u1 = BASE_DIGITS.sub(_lockedAmount.mul(1e6).div(_totalLiquidity)); //util rate before. 1000000 = 100.000%
-        uint256 u2 = BASE_DIGITS.sub(_lockedAmount.add(_amount).mul(1e6).div(_totalLiquidity)); //util rate after. 1000000 = 100.000%
+        uint256 u1 = BASE_DIGITS.sub(_lockedAmount.mul(BASE_DIGITS).div(_totalLiquidity)); //util rate before. 1000000 = 100.000%
+        uint256 u2 = BASE_DIGITS.sub(_lockedAmount.add(_amount).mul(BASE_DIGITS).div(_totalLiquidity)); //util rate after. 1000000 = 100.000%
         
         //calc 0=>u1 area
         int128 ln_u1 = calculator.ln(calculator.fromUInt(u1.add(a)));
         uint256 ln_res_u1 = calculator.mulu(ln_u1, k).mul(365);
-        uint256 _premium_u1 = ln_res_u1.add(b.mul(u1)).sub(a.mul(365).mul(u1));
+        uint256 _premium_u1 = ln_res_u1.add(_b.mul(u1)).sub(a.mul(365).mul(u1));
 
         //calc 0=>u2 area
         int128 ln_u2 = calculator.ln(calculator.fromUInt(u2.add(a)));
         uint256 ln_res_u2 = calculator.mulu(ln_u2, k).mul(365); //365kln(x+a): 10 degits accuracy
-        uint256 _premium_u2 = ln_res_u2.add(b.mul(u2)).sub(a.mul(365).mul(u2)); //365kln(x+a)+(b-365a)x: 10 degits accuracy
+        uint256 _premium_u2 = ln_res_u2.add(_b.mul(u2)).sub(a.mul(365).mul(u2)); //365kln(x+a)+(b-365a)x: 10 degits accuracy
 
         //(u1 area) - (u2 area) = premium rate between u1 and u2
-        uint256 _premium = _premium_u1.sub(_premium_u2);
+        uint256 premiumRate = _premium_u1.sub(_premium_u2);
         
-        return _premium;
+        return premiumRate;
     }
     
-    // Returns token amount for premium
+    /***
+    * @notice Get premium. This returns token amount of premium buyer has to pay.
+    * @param _amount 
+    * @param _term
+    * @param _totalLiquidity total liquidity token amount in the insurance pool.
+    * @param _lockedAmount utilized token amount of the insurance pool.
+    */
     function getPremium(
         uint256 _amount,
         uint256 _term,
@@ -134,16 +147,17 @@ contract BondingPremiumV2 {
         uint256 _lockedAmount
     ) external view returns (uint256) {
         require(_amount.add(_lockedAmount) <= _totalLiquidity, "Amount exceeds.");
+        require(_totalLiquidity != 0, "_totalLiquidity cannnot be 0");
+
+        if (_amount == 0) {
+            return 0;
+        }
         
-        uint256 _util = _lockedAmount.mul(1e6).div(_totalLiquidity);
-            
-        uint256 _b = b;
-        if (_util < low_risk_util && _totalLiquidity > low_risk_liquidity) 
-            _b = low_risk_b;
+        uint256 premiumRate = getPremiumRate(_amount, _totalLiquidity, _lockedAmount);
+
+        uint256 premium = _amount.mul(premiumRate).mul(_term).div(365 days).div(BASE_DIGITS_x2);
         
-        uint256 premium = getPremiumRate(_amount, _totalLiquidity, _lockedAmount);
-        
-        return _amount.mul(premium).mul(_term).div(365 days).div(1e12);
+        return premium;
     }
 
     /**
