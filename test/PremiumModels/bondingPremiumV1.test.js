@@ -83,8 +83,8 @@ describe("test BondingPremium", () => {
     });
   });
 
-  describe("test setPremium2", function () {
-    it("setPremium2 correctly", async () => {
+  describe("test setOptions", function () {
+    it("setOptions correctly", async () => {
       //initial value
       let low_risk_b = BigNumber.from("5000");
       let low_risk_liquidity = BigNumber.from("1000000000000");
@@ -99,7 +99,7 @@ describe("test BondingPremium", () => {
       low_risk_liquidity = BigNumber.from("102544520000000");
       low_risk_util = BigNumber.from("121400");
 
-      await premium.setPremium2(
+      await premium.setOptions(
         low_risk_liquidity,
         low_risk_b,
         low_risk_util,
@@ -111,15 +111,15 @@ describe("test BondingPremium", () => {
       expect(await premium.low_risk_util()).to.equal(low_risk_util);
     });
 
-    it("revert setPremium2", async () => {
+    it("revert setOptions", async () => {
       //new value
       low_risk_b = BigNumber.from("4000030");
 
-      await expect(premium.setPremium2(0, low_risk_b, 0, 0)).to.revertedWith(
+      await expect(premium.setOptions(0, low_risk_b, 0, 0)).to.revertedWith(
         "low_risk_base_fee must lower than base_fee"
       );
       await expect(
-        premium.connect(alice).setPremium2(0, 0, 0, 0)
+        premium.connect(alice).setOptions(0, 0, 0, 0)
       ).to.revertedWith("Restricted: caller is not allowed to operate");
     });
   });

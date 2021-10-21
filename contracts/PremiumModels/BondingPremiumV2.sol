@@ -35,8 +35,8 @@ contract BondingPremiumV2 {
     address public future_owner;
 
     uint256 BASE_DIGITS = uint256(1e6); //bonding curve graph takes 1e6 as 100.0000%
-    uint256 BASE_DIGITS_x2 = uint256(1e12);
-    uint256 DIGITS_ADJUSTER = uint256(10);
+    uint256 BASE_DIGITS_x2 = uint256(1e12); //BASE_DIGITS^2
+    uint256 DIGITS_ADJUSTER = uint256(10); //adjuster of 1e6 to 1e5 (100.0000% to 100.000%)
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Restricted: caller is not allowed to operate");
@@ -97,7 +97,7 @@ contract BondingPremiumV2 {
 
     /***
     * @notice Get premium rate.
-    * @param _amount 
+    * @param _amount  token amount of insurance be bought
     * @param _totalLiquidity total liquidity token amount in the insurance pool.
     * @param _lockedAmount utilized token amount of the insurance pool.
     * @dev This returns value without divides by BASE_DEGITS to keep precision. have to devide by BASE_DEGITS at last of getPremium().
@@ -179,11 +179,13 @@ contract BondingPremiumV2 {
      * @param _a low_risk_border
      * @param _b low_risk_b
      * @param _c low_risk_util
+     * @param _d unused slot
      */
-    function setPremium2(
+    function setOptions(
         uint256 _a,
         uint256 _b,
-        uint256 _c
+        uint256 _c,
+        uint256 _d
     ) external onlyOwner {
         require(_b < b, "low_risk_base_fee must lower than base_fee");
 

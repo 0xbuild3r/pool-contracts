@@ -98,7 +98,7 @@ describe("test BondingPremium", () => {
       low_risk_liquidity = BigNumber.from("1000000000000"); //1M USDC
       low_risk_util = BigNumber.from("100000"); //10%
 
-      await premium['setPremium2(uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util);
+      await premium['setOptions(uint256,uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util, 0);
       
       let total = BigNumber.from("1000000").mul(ten_to_the_18);
       let locked_amount = BigNumber.from("10000").mul(ten_to_the_18); //1% utilized
@@ -149,7 +149,7 @@ describe("test BondingPremium", () => {
       low_risk_b = BigNumber.from("5000"); //0.5%
       low_risk_liquidity = BigNumber.from("1000000000000"); //1M USDC
       low_risk_util = BigNumber.from("100000"); //10%
-      await premium['setPremium2(uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util);
+      await premium['setOptions(uint256,uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util, 0);
 
 
       let total = BigNumber.from("1000000").mul(ten_to_the_18);
@@ -260,8 +260,8 @@ describe("test BondingPremium", () => {
 
 
   //-- config --//
-  describe("test setPremium2", function () {
-    it("setPremium2 correctly", async () => {
+  describe("test setOptions", function () {
+    it("setOptions correctly", async () => {
       expect(await premium.low_risk_b()).to.equal(low_b_initial);
       expect(await premium.low_risk_liquidity()).to.equal(low_liquidity_initial);
       expect(await premium.low_risk_util()).to.equal(low_util_initial);
@@ -271,28 +271,28 @@ describe("test BondingPremium", () => {
       low_risk_liquidity = BigNumber.from("102544520000000");
       low_risk_util = BigNumber.from("121400");
 
-      //await premium.setPremium2(
+      //await premium.setOptions(
       //  low_risk_liquidity,
       //  low_risk_b,
       //  low_risk_util,
       //  0
       //);
-      await premium['setPremium2(uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util);
+      await premium['setOptions(uint256,uint256,uint256,uint256)'](low_risk_liquidity, low_risk_b, low_risk_util, 0);
       
       expect(await premium.low_risk_b()).to.equal(low_risk_b);
       expect(await premium.low_risk_liquidity()).to.equal(low_risk_liquidity);
       expect(await premium.low_risk_util()).to.equal(low_risk_util);
     });
 
-    it("revert setPremium2", async () => {
+    it("revert setOptions", async () => {
       //new value
       low_risk_b = BigNumber.from("4000030");
 
-      await expect(premium['setPremium2(uint256,uint256,uint256)'](0, low_risk_b, 0)).to.revertedWith(
+      await expect(premium['setOptions(uint256,uint256,uint256,uint256)'](0, low_risk_b, 0, 0)).to.revertedWith(
         "low_risk_base_fee must lower than base_fee"
       );
       await expect(
-        premium.connect(alice)['setPremium2(uint256,uint256,uint256)'](0, 0, 0)
+        premium.connect(alice)['setOptions(uint256,uint256,uint256,uint256)'](0, 0, 0, 0)
       ).to.revertedWith("Restricted: caller is not allowed to operate");
     });
   });

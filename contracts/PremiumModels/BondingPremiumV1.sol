@@ -152,7 +152,7 @@ contract BondingPremiumV1 {
     * @param _c low_risk_util
     * @param _d won't be used in this model
     */
-    function setPremium2(
+    function setOptions(
         uint256 _a,
         uint256 _b,
         uint256 _c,
