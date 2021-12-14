@@ -9,19 +9,26 @@ pragma solidity 0.8.7;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
+import "./interfaces/IUniversalMarket.sol";
 import "./InsureDAOERC20.sol";
 import "./interfaces/IVault.sol";
 import "./interfaces/IRegistry.sol";
 import "./interfaces/IParameters.sol";
-import "./interfaces/ICDS.sol";
+import "./interfaces/ICDSTemplate.sol";
 import "./interfaces/IMinter.sol";
 
-contract CDSTemplate is InsureDAOERC20, ICDS {
-
+contract CDSTemplate is InsureDAOERC20, ICDSTemplate, IUniversalMarket{
     /**
      * EVENTS
      */
     event Deposit(address indexed depositor, uint256 amount, uint256 mint);
+    event Fund(address indexed depositor, uint256 amount, uint256 attribution);
+    event Defund(
+        address indexed depositor,
+        uint256 amount,
+        uint256 attribution
+    );
+
     event WithdrawRequested(
         address indexed withdrawer,
         uint256 amount,
@@ -31,7 +38,6 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
     event Compensated(address indexed index, uint256 amount);
     event Paused(bool paused);
     event MetadataChanged(string metadata);
-
 
     /**
      * Storage
@@ -45,6 +51,9 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
     IParameters public parameters;
     IRegistry public registry;
     IVault public vault;
+    uint256 public surplusPool;
+    uint256 public crowdPool;
+    uint256 public constant MAGIC_SCALE_1E6 = 1e6; //internal multiplication scale 1e6 to reduce decimal truncation
 
     ///@notice user status management
     struct Withdrawal {
@@ -52,7 +61,6 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
         uint256 amount;
     }
     mapping(address => Withdrawal) public withdrawalReq;
-
 
     /**
      * @notice Throws if called by any account other than the owner.
@@ -87,7 +95,7 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
         string calldata _metaData,
         uint256[] calldata _conditions,
         address[] calldata _references
-    ) external {
+    ) external override {
         require(
             initialized == false &&
                 bytes(_metaData).length > 0 &&
@@ -99,11 +107,11 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
 
         initialized = true;
 
-        string memory name = "InsureDAO-CDS";
-        string memory symbol = "iCDS";
-        uint8 decimals = IERC20Metadata(_references[0]).decimals();
+        string memory _name = "InsureDAO-CDS";
+        string memory _symbol = "iCDS";
+        uint8 _decimals = IERC20Metadata(_references[0]).decimals();
 
-        initializeToken(name, symbol, decimals);
+        initializeToken(_name, _symbol, _decimals);
 
         parameters = IParameters(_references[2]);
         vault = IVault(parameters.getVault(_references[0]));
@@ -120,31 +128,58 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
      * @notice A liquidity provider supplies collatral to the pool and receives iTokens
      * @param _amount amount of token to deposit
      */
-    function deposit(uint256 _amount) public returns (uint256 _mintAmount) {
+    function deposit(uint256 _amount) external returns (uint256 _mintAmount) {
         require(paused == false, "ERROR: DEPOSIT_DISABLED");
         require(_amount > 0, "ERROR: DEPOSIT_ZERO");
 
-        uint256 _fee = parameters.getDepositFee(_amount, msg.sender);
-        uint256 _add = _amount - _fee;
-        uint256 _supply = totalSupply();
-        uint256 _totalLiquidity = totalLiquidity();
         //deposit and pay fees
-        vault.addValue(_add, msg.sender, address(this));
-        vault.addValue(_fee, msg.sender, parameters.getOwner());
-
-        //Calculate iToken value
-        if (_supply > 0 && _totalLiquidity > 0) {
-            _mintAmount = _add * _supply / _totalLiquidity;
-        } else if (_supply > 0 && _totalLiquidity == 0) {
-            _mintAmount = _add / _supply;
+        uint256 _liquidity = vault.attributionValue(crowdPool);
+        uint256 _supply = totalSupply();
+        address[] memory _beneficiaries = new address[](1);
+        _beneficiaries[0] = address(this);
+        uint256[] memory _shares = new uint256[](1);
+        _shares[0] = MAGIC_SCALE_1E6;
+        crowdPool += vault.addValue(_amount, msg.sender, address(this));
+        if (_supply > 0 && _liquidity > 0) {
+            _mintAmount = (_amount * _supply) / _liquidity;
+        } else if (_supply > 0 && _liquidity == 0) {
+            _mintAmount = (_amount * _supply) / _amount;
         } else {
-            _mintAmount = _add;
+            _mintAmount = _amount;
         }
 
         emit Deposit(msg.sender, _amount, _mintAmount);
 
         //mint iToken
         _mint(msg.sender, _mintAmount);
+    }
+
+    /**
+     * @notice A liquidity provider supplies collatral to the pool and receives iTokens
+     * @param _amount amount of token to deposit
+     */
+    function fund(uint256 _amount) external {
+        require(paused == false, "ERROR: DEPOSIT_DISABLED");
+
+        //deposit and pay fees
+        uint256 _attribution = vault.addValue(
+            _amount,
+            msg.sender,
+            address(this)
+        );
+
+        surplusPool += _attribution;
+
+        emit Fund(msg.sender, _amount, _attribution);
+    }
+
+    function defund(uint256 _amount) external override onlyOwner {
+        require(paused == false, "ERROR: DEPOSIT_DISABLED");
+
+        uint256 _attribution = vault.withdrawValue(_amount, msg.sender);
+        surplusPool -= _attribution;
+
+        emit Defund(msg.sender, _amount, _attribution);
     }
 
     /**
@@ -167,17 +202,19 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
      */
     function withdraw(uint256 _amount) external returns (uint256 _retVal) {
         //Calculate underlying value
-        _retVal = vault.underlyingValue(address(this)) * _amount / totalSupply();
+        _retVal = (vault.attributionValue(crowdPool) * _amount) / totalSupply();
         require(paused == false, "ERROR: WITHDRAWAL_PENDING");
         require(
-            withdrawalReq[msg.sender].timestamp + parameters.getLockup(msg.sender) < block.timestamp,
+            withdrawalReq[msg.sender].timestamp +
+                parameters.getLockup(msg.sender) <
+                block.timestamp,
             "ERROR: WITHDRAWAL_QUEUE"
         );
         require(
-            withdrawalReq[msg.sender].timestamp 
-            + parameters.getLockup(msg.sender) 
-            + parameters.getWithdrawable(msg.sender) 
-            > block.timestamp,
+            withdrawalReq[msg.sender].timestamp +
+                parameters.getLockup(msg.sender) +
+                parameters.getWithdrawable(msg.sender) >
+                block.timestamp,
             "ERROR: WITHDRAWAL_NO_ACTIVE_REQUEST"
         );
         require(
@@ -192,7 +229,7 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
         _burn(msg.sender, _amount);
 
         //Withdraw liquidity
-        vault.withdrawValue(_retVal, msg.sender);
+        crowdPool -= vault.withdrawValue(_retVal, msg.sender);
         emit Withdraw(msg.sender, _amount, _retVal);
     }
 
@@ -204,26 +241,32 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
      * @notice Compensate the shortage if an index is insolvent
      * @param _amount amount of underlier token to compensate shortage within index
      */
-    function compensate(uint256 _amount) external override {
+    function compensate(uint256 _amount)
+        external
+        override
+        returns (uint256 _compensated)
+    {
         require(registry.isListed(msg.sender));
         uint256 _available = vault.underlyingValue(address(this));
+        uint256 _crowdAttribution = crowdPool;
+        uint256 _surplusAttribution = surplusPool;
+        uint256 _attribution;
         if (_available >= _amount) {
-            //Normal case
-            vault.transferValue(_amount, msg.sender);
+            _compensated = _amount;
+            _attribution = vault.transferValue(_amount, msg.sender);
+            emit Compensated(msg.sender, _amount);
         } else {
-            uint256 _shortage = _amount - _available;
-            //transfer as much as possible
-            vault.transferValue(_available, msg.sender);
-            //check token address
-            address _token = vault.token();
-            //mint and swap for the shortage
-            IMinter(parameters.getMinter()).emergency_mint(_token, _shortage);
-            IERC20(_token).approve(address(vault), _shortage);
-            vault.addValue(_shortage, address(this), msg.sender);
+            _compensated = _available;
+            _attribution = vault.transferValue(_available, msg.sender);
+            emit Compensated(msg.sender, _available);
         }
-        emit Compensated(msg.sender, _amount);
+        crowdPool -=
+            (_crowdAttribution * _attribution) /
+            (_crowdAttribution + _surplusAttribution);
+        surplusPool -=
+            (_surplusAttribution * _attribution) /
+            (_crowdAttribution + _surplusAttribution);
     }
-
 
     /**
      * Utilities
@@ -238,12 +281,14 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
     }
 
     /**
-     * @notice Get the exchange rate of LP token against underlying asset(scaled by 1e18, if 1e18, the value of iToken vs underlier is 1:1)
+     * @notice Get the exchange rate of LP token against underlying asset(scaled by MAGIC_SCALE_1E6, if MAGIC_SCALE_1E6, the value of iToken vs underlier is 1:1)
      * @return The value against the underlying token balance.
      */
     function rate() external view returns (uint256) {
         if (totalSupply() > 0) {
-            return totalLiquidity() * 1e18 / totalSupply();
+            return
+                (vault.attributionValue(crowdPool) * MAGIC_SCALE_1E6) /
+                totalSupply();
         } else {
             return 0;
         }
@@ -260,7 +305,8 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
             return 0;
         } else {
             return
-                _balance * (vault.underlyingValue(address(this)) / totalSupply());
+                _balance *
+                (vault.underlyingValue(address(this)) / totalSupply());
         }
     }
 
@@ -272,7 +318,7 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
      * @notice Change metadata string
      * @param _metadata new metadata string
      */
-    function changeMetadata(string calldata _metadata) external onlyOwner {
+    function changeMetadata(string calldata _metadata) external override onlyOwner {
         metadata = _metadata;
         emit MetadataChanged(_metadata);
     }
@@ -281,7 +327,7 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
      * @notice Used for changing settlementFeeRecipient
      * @param _state true to set paused and vice versa
      */
-    function setPaused(bool _state) external onlyOwner {
+    function setPaused(bool _state) external override onlyOwner {
         if (paused != _state) {
             paused = _state;
             emit Paused(_state);
@@ -305,12 +351,11 @@ contract CDSTemplate is InsureDAOERC20, ICDS {
     ) internal virtual override {
         super._beforeTokenTransfer(from, to, amount);
 
-        if(from != address(0)){
+        if (from != address(0)) {
             uint256 _after = balanceOf(from) - amount;
             if (_after < withdrawalReq[from].amount) {
                 withdrawalReq[from].amount = _after;
             }
-
         }
     }
 }

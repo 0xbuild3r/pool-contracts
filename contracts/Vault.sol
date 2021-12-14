@@ -6,7 +6,6 @@ pragma solidity 0.8.7;
  * @notice
  * SPDX-License-Identifier: GPL-3.0
  */
-
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -16,7 +15,7 @@ import "./interfaces/IVault.sol";
 import "./interfaces/IController.sol";
 import "./interfaces/IRegistry.sol";
 
-contract Vault is IVault{
+contract Vault is IVault {
     using SafeERC20 for IERC20;
 
     /**
@@ -27,6 +26,7 @@ contract Vault is IVault{
     IController public controller;
     IRegistry public registry;
 
+    mapping(address => uint256) public override debts;
     mapping(address => uint256) public attributions;
     uint256 public totalAttributions;
 
@@ -34,14 +34,14 @@ contract Vault is IVault{
     uint256 public balance; //balance of underlying token
 
     IOwnership public ownership;
-
-
-    event CommitNewAdmin(uint256 deadline, address future_admin);
-    event NewAdmin(address admin);
+    
     event ControllerSet(address controller);
 
     modifier onlyOwner() {
-        require(ownership.owner() == msg.sender, 'Restricted: caller is not allowed to operate');
+        require(
+            ownership.owner() == msg.sender,
+            "Restricted: caller is not allowed to operate"
+        );
         _;
     }
 
@@ -62,42 +62,71 @@ contract Vault is IVault{
      */
 
     /**
-     * @notice A registered contract can deposit collateral and get attribution point in return
-     * @param  _amount amount of token to deposit
+     * @notice A market contract can deposit collateral and get attribution point in return
+     * @param  _amount amount of tokens to deposit
      * @param _from sender's address
-     * @param _beneficiary beneficiary's address
-     * @return _attributions attribution amount generated from the transaction
+     * @param _beneficiaries beneficiary's address array
+     * @param _shares funds share within beneficiaries (100% = 1e6)
+     * @return _allocations attribution amount generated from the transaction
      */
-    function addValue(
+    function addValueBatch(
         uint256 _amount,
         address _from,
-        address _beneficiary
-    ) external override returns (uint256 _attributions) {
-        require(
-            IRegistry(registry).isListed(msg.sender),
-            "ERROR_ADD-VALUE_BADCONDITOONS"
-        );
+        address[2] memory _beneficiaries,
+        uint256[2] memory _shares
+    ) external override returns (uint256[2] memory _allocations) {
+        uint256 _attributions;
         if (totalAttributions == 0) {
             _attributions = _amount;
         } else {
             uint256 _pool = valueAll();
-            _attributions = _amount * totalAttributions / _pool;
+            _attributions = (_amount * totalAttributions) / _pool;
         }
         IERC20(token).safeTransferFrom(_from, address(this), _amount);
 
         balance += _amount;
         totalAttributions += _attributions;
-        attributions[_beneficiary] +=  _attributions;
+        for (uint128 i = 0; i < 2; i++) {
+            uint256 _allocation = (_shares[i] * _attributions) / 1e6;
+            attributions[_beneficiaries[i]] += _allocation;
+            _allocations[i] = _allocation;
+        }
+    }
+
+    /**
+     * @notice A market contract can deposit collateral and get attribution point in return
+     * @param  _amount amount of tokens to deposit
+     * @param _from sender's address
+     * @param _beneficiary beneficiary's address
+     * @return _attributions attribution amount generated from the transaction
+     */
+
+    function addValue(
+        uint256 _amount,
+        address _from,
+        address _beneficiary
+    ) external override returns (uint256 _attributions) {
+        if (totalAttributions == 0) {
+            _attributions = _amount;
+        } else {
+            uint256 _pool = valueAll();
+            _attributions = (_amount * totalAttributions) / _pool;
+        }
+        IERC20(token).safeTransferFrom(_from, address(this), _amount);
+        balance += _amount;
+        totalAttributions += _attributions;
+        attributions[_beneficiary] += _attributions;
     }
 
     /**
      * @notice an address that has balance in the vault can withdraw underlying value
-     * @param _amount amount of token to withdraw
-     * @param _to address to get underlying token
+     * @param _amount amount of tokens to withdraw
+     * @param _to address to get underlying tokens
      * @return _attributions amount of attributions burnet
      */
     function withdrawValue(uint256 _amount, address _to)
-        external override
+        external
+        override
         returns (uint256 _attributions)
     {
         require(
@@ -105,14 +134,14 @@ contract Vault is IVault{
                 underlyingValue(msg.sender) >= _amount,
             "ERROR_WITHDRAW-VALUE_BADCONDITOONS"
         );
-        _attributions = totalAttributions * _amount / valueAll();
-        attributions[msg.sender] -=  _attributions;
+        _attributions = (totalAttributions * _amount) / valueAll();
+        attributions[msg.sender] -= _attributions;
         totalAttributions -= _attributions;
         if (available() < _amount) {
             uint256 _shortage = _amount - available();
             _unutilize(_shortage);
         }
-        balance -=_amount;
+        balance -= _amount;
         IERC20(token).safeTransfer(_to, _amount);
     }
 
@@ -122,25 +151,104 @@ contract Vault is IVault{
      * @param _destination reciepient of value
      */
 
-    function transferValue(uint256 _amount, address _destination) external override {
+    function transferValue(uint256 _amount, address _destination)
+        external
+        override
+        returns (uint256 _attributions)
+    {
         require(
             attributions[msg.sender] > 0 &&
                 underlyingValue(msg.sender) >= _amount,
             "ERROR_TRANSFER-VALUE_BADCONDITOONS"
         );
-        uint256 _targetAttribution = _amount * totalAttributions / valueAll();
-        attributions[msg.sender] -= _targetAttribution;
-        attributions[_destination] += _targetAttribution;
+        _attributions = (_amount * totalAttributions) / valueAll();
+        attributions[msg.sender] -= _attributions;
+        attributions[_destination] += _attributions;
+    }
+
+    /**
+     * @notice a registered contract can borrow balance from the vault
+     * @param _amount borrow amouunt
+     * @param _to borrower's address
+     */
+
+    function borrowValue(uint256 _amount, address _to)
+        external
+        override
+        returns (uint256 _attributions)
+    {
+        require(
+            IRegistry(registry).isListed(msg.sender),
+            "ERROR_BORROW-VALUE_BADCONDITOONS"
+        );
+        _attributions = (totalAttributions * _amount) / valueAll();
+        debts[msg.sender] += _amount;
+        totalAttributions -= _attributions;
+        balance -= _amount;
+        IERC20(token).safeTransfer(_to, _amount);
+    }
+
+    /**
+     * @notice a registerd market can transfer their debt to a market
+     * @param _amount debt amount to transfer
+     */
+
+    function transferDebt(uint256 _amount) external override {
+        require(
+            IRegistry(registry).isListed(msg.sender),
+            "ERROR_TRANSFER-DEBT_BADCONDITOONS"
+        );
+        debts[msg.sender] -= _amount;
+        debts[address(0)] += _amount;
+    }
+
+    /**
+     * @notice an address that has balance in the vault can offset an address's debt
+     * @param _amount debt amount to offset
+     * @param _target borrower's address
+     */
+
+    function offsetDebt(uint256 _amount, address _target)
+        external
+        override
+        returns (uint256 _attributions)
+    {
+        require(
+            attributions[msg.sender] > 0 &&
+                underlyingValue(msg.sender) >= _amount,
+            "ERROR_REPAY_DEBT_BADCONDITOONS"
+        );
+        _attributions = (_amount * totalAttributions) / valueAll();
+        attributions[msg.sender] -= _attributions;
+        debts[_target] -= _amount;
+    }
+
+    /**
+     * @notice anyone can repay debt by sending tokens to this contract
+     * @param _amount debt amount to repay
+     * @param _target borrower's address
+     */
+
+    function repayDebt(uint256 _amount, address _target) external override {
+        uint256 _debt = debts[_target];
+        if (_debt >= _amount) {
+            IERC20(token).safeTransferFrom(msg.sender, _target, _amount);
+            debts[_target] -= _amount;
+        } else {
+            IERC20(token).safeTransferFrom(msg.sender, _target, _debt);
+            debts[_target] = 0;
+        }
     }
 
     /**
      * @notice an address that has balance in the vault can withdraw value denominated in attribution
      * @param _attribution amount of attribution to burn
      * @param _to beneficiary's address
-     * @return _retVal number of token withdrawn from the transaction
+     * @return _retVal number of tokens withdrawn from the transaction
      */
     function withdrawAttribution(uint256 _attribution, address _to)
-        external override
+        external
+        override
         returns (uint256 _retVal)
     {
         _retVal = _withdrawAttribution(_attribution, _to);
@@ -149,10 +257,11 @@ contract Vault is IVault{
     /**
      * @notice an address that has balance in the vault can withdraw all value
      * @param _to beneficiary's address
-     * @return _retVal number of token withdrawn from the transaction
+     * @return _retVal number of tokens withdrawn from the transaction
      */
     function withdrawAllAttribution(address _to)
-        external override
+        external
+        override
         returns (uint256 _retVal)
     {
         _retVal = _withdrawAttribution(attributions[msg.sender], _to);
@@ -162,7 +271,7 @@ contract Vault is IVault{
      * @notice an address that has balance in the vault can withdraw all value
      * @param _attribution amount of attribution to burn
      * @param _to beneficiary's address
-     * @return _retVal number of token withdrawn from the transaction
+     * @return _retVal number of tokens withdrawn from the transaction
      */
     function _withdrawAttribution(uint256 _attribution, address _to)
         internal
@@ -172,7 +281,7 @@ contract Vault is IVault{
             attributions[msg.sender] >= _attribution,
             "ERROR_WITHDRAW-ATTRIBUTION_BADCONDITOONS"
         );
-        _retVal = _attribution * valueAll() / totalAttributions;
+        _retVal = (_attribution * valueAll()) / totalAttributions;
         attributions[msg.sender] -= _attribution;
         if (available() < _retVal) {
             uint256 _shortage = _retVal - available();
@@ -188,7 +297,8 @@ contract Vault is IVault{
      * @param _destination reciepient of attribution
      */
     function transferAttribution(uint256 _amount, address _destination)
-        external override
+        external
+        override
     {
         require(
             attributions[msg.sender] > 0 && attributions[msg.sender] >= _amount,
@@ -200,7 +310,7 @@ contract Vault is IVault{
 
     /**
      * @notice the controller can utilize all available stored funds
-     * @return _amount amount of token utilized
+     * @return _amount amount of tokens utilized
      */
     function utilize() external override returns (uint256 _amount) {
         if (keeper != address(0)) {
@@ -220,7 +330,12 @@ contract Vault is IVault{
      * @return amount of attritbution
      */
 
-    function attributionOf(address _target) external override view returns (uint256) {
+    function attributionOf(address _target)
+        external
+        view
+        override
+        returns (uint256)
+    {
         return attributions[_target];
     }
 
@@ -238,12 +353,13 @@ contract Vault is IVault{
      * @return token value of input attribution
      */
     function attributionValue(uint256 _attribution)
-        external override
+        external
         view
+        override
         returns (uint256)
     {
         if (totalAttributions > 0 && _attribution > 0) {
-            return _attribution * valueAll() / totalAttributions;
+            return (_attribution * valueAll()) / totalAttributions;
         } else {
             return 0;
         }
@@ -254,9 +370,14 @@ contract Vault is IVault{
      * @param _target target address
      * @return token value of target address
      */
-    function underlyingValue(address _target) public override view returns (uint256) {
+    function underlyingValue(address _target)
+        public
+        view
+        override
+        returns (uint256)
+    {
         if (attributions[_target] > 0) {
-            return valueAll() * attributions[_target] / totalAttributions;
+            return (valueAll() * attributions[_target]) / totalAttributions;
         } else {
             return 0;
         }
@@ -292,9 +413,8 @@ contract Vault is IVault{
      * @return value of one share of attribution
      */
     function getPricePerFullShare() public view returns (uint256) {
-        return valueAll() * 1e18 / totalAttributions;
+        return (valueAll() * 1e18) / totalAttributions;
     }
-
 
     /**
      * onlyOwner
@@ -305,12 +425,13 @@ contract Vault is IVault{
      * @param _token token address
      * @param _to beneficiary's address
      */
-    function withdrawRedundant(address _token, address _to) external onlyOwner{
-
+    function withdrawRedundant(address _token, address _to) external override onlyOwner {
         if (
-            _token == address(token) && balance < IERC20(token).balanceOf(address(this))
+            _token == address(token) &&
+            balance < IERC20(token).balanceOf(address(this))
         ) {
-            uint256 _redundant = IERC20(token).balanceOf(address(this)) - balance;
+            uint256 _redundant = IERC20(token).balanceOf(address(this)) -
+                balance;
             IERC20(token).safeTransfer(_to, _redundant);
         } else if (IERC20(_token).balanceOf(address(this)) > 0) {
             IERC20(_token).safeTransfer(
@@ -324,7 +445,7 @@ contract Vault is IVault{
      * @notice admin function to set controller address
      * @param _controller address of the controller
      */
-    function setController(address _controller) public onlyOwner {
+    function setController(address _controller) public override onlyOwner {
         controller.migrate(address(_controller));
         controller = IController(_controller);
         emit ControllerSet(_controller);
@@ -334,7 +455,7 @@ contract Vault is IVault{
      * @notice the controller can utilize all available stored funds
      * @param _keeper keeper address
      */
-    function setKeeper(address _keeper) external onlyOwner {
+    function setKeeper(address _keeper) external override onlyOwner {
         if (keeper != _keeper) {
             keeper = _keeper;
         }

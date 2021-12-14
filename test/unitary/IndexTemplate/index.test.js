@@ -329,7 +329,6 @@ describe("Index", function () {
     const Factory = await ethers.getContractFactory("Factory");
     const Vault = await ethers.getContractFactory("Vault");
     const Registry = await ethers.getContractFactory("Registry");
-    const FeeModel = await ethers.getContractFactory("FeeModel");
     const PremiumModel = await ethers.getContractFactory("TestPremiumModel");
     const Parameters = await ethers.getContractFactory("Parameters");
     const Contorller = await ethers.getContractFactory("ControllerMock");
@@ -339,7 +338,6 @@ describe("Index", function () {
     dai = await DAI.deploy();
     registry = await Registry.deploy(ownership.address);
     factory = await Factory.deploy(registry.address, ownership.address);
-    fee = await FeeModel.deploy(ownership.address);
     premium = await PremiumModel.deploy();
     controller = await Contorller.deploy(dai.address, ownership.address);
     vault = await Vault.deploy(
@@ -406,13 +404,13 @@ describe("Index", function () {
       true
     );
 
-    await fee.setFee(governanceFeeRate);
+
+    await parameters.setFeeRate(ZERO_ADDRESS, governanceFeeRate);
     await parameters.setMaxList(ZERO_ADDRESS, "10");
     await parameters.setGrace(ZERO_ADDRESS, "259200");
     await parameters.setLockup(ZERO_ADDRESS, "604800");
     await parameters.setMindate(ZERO_ADDRESS, "604800");
     await parameters.setPremiumModel(ZERO_ADDRESS, premium.address);
-    await parameters.setFeeModel(ZERO_ADDRESS, fee.address);
     await parameters.setWithdrawable(ZERO_ADDRESS, "86400000");
     await parameters.setVault(dai.address, vault.address);
 
