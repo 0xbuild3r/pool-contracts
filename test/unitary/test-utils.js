@@ -38,6 +38,12 @@ const verifyRate = async ({ template, rate }) => {
 
 //======== POOLs ========//
 const _verifyPoolStatus = async ({ pool, totalLP, totalLiquidity, availableBalance, rate, utilizationRate, allInsuranceCount }) => {
+    console.log('totalSupply: ', (await pool.totalSupply()).toString());
+    console.log('totalLiquidity: ', (await pool.totalLiquidity()).toString());
+    console.log('availableBalance: ', (await pool.availableBalance()).toString());
+    console.log('rate: ', (await pool.rate()).toString());
+    console.log('utilizationRate: ', (await pool.utilizationRate()).toString());
+    console.log('allInsuranceCount: ', (await pool.allInsuranceCount()).toString());
     expect(await pool.totalSupply()).to.equal(totalLP);
     expect(await pool.totalLiquidity()).to.equal(totalLiquidity);
     expect(await pool.availableBalance()).to.equal(availableBalance);
@@ -79,6 +85,8 @@ const verifyPoolsStatusForIndex = async ({ pools }) => {
 
 //those legacy functions are used for tests that are not refactored yet.
 const _verifyPoolStatus_legacy = async ({ pool, totalLiquidity, availableBalance }) => {
+    // console.log('totalLiquidity: ', (await pool.totalLiquidity()).toString());
+    // console.log('availableBalance: ', (await pool.availableBalance()).toString());
     expect(await pool.totalLiquidity()).to.equal(totalLiquidity);
     expect(await pool.availableBalance()).to.equal(availableBalance);
 }
@@ -110,6 +118,20 @@ const verifyPoolsStatusForIndex_legacy = async ({ pools }) => {
 
 //======== INDEXs ========//
 const verifyIndexStatus = async ({ index, totalSupply, totalLiquidity, totalAllocatedCredit, leverage, withdrawable, rate }) => {
+    // const totalAllocatedCredit1 = await index.totalAllocatedCredit();
+    // const totalAllocatedCredit2 = await index.totalAllocatedCredit();
+    // console.log('totalAllocatedCredit: ', totalAllocatedCredit1.toString());
+    // console.log('totalAllocatedCredit: ', totalAllocatedCredit2.toString());
+    // console.log('totalAllocatedCredit111111: ', totalAllocatedCredit.toString());
+    // const totalAllocPoint = await index.totalAllocPoint();
+    // console.log('totalAllocPoint: ', totalAllocPoint.toString());
+    // console.log('totalSupply: ', (await index.totalSupply()).toString());
+    // console.log('totalLiquidity: ', (await index.totalLiquidity()).toString());
+    // console.log('leverage: ', (await index.leverage()).toString());
+    // console.log('withdrawable: ', (await index.withdrawable()).toString());
+    // console.log('rate: ', (await index.rate()).toString());
+    console.log('real totalAllocatedCredit: ', (await index.totalAllocatedCredit()).toString());
+    console.log('expect totalAllocatedCredit: ', totalAllocatedCredit.toString());
     expect(await index.totalSupply()).to.equal(totalSupply);
     expect(await index.totalLiquidity()).to.equal(totalLiquidity);
     expect(await index.totalAllocatedCredit()).to.equal(totalAllocatedCredit);
@@ -148,6 +170,7 @@ const insure = async ({ pool, insurer, amount, maxCost, span, target }) => {
     let tx = await pool.connect(insurer).insure(amount, maxCost, span, target);
 
     let receipt = await tx.wait();
+    console.log('aaa: ', receipt.events);
     let premium = receipt.events[4].args[6];
 
     return premium
