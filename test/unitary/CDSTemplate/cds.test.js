@@ -13,9 +13,9 @@ const {
   verifyPoolsStatusForIndex,
   verifyPoolsStatusForIndex_legacy,
   verifyIndexStatus,
-  verifyCDSStatus,
-  verifyVaultStatus,
-  verifyVaultStatusOf,
+  verifyCDSStatus_legacy,
+  verifyVaultStatus_legacy,
+  verifyVaultStatusOf_legacy,
 } = require('../test-utils')
 
 
@@ -201,7 +201,7 @@ describe.skip("CDS", function () {
     await parameters.setFeeRate(ZERO_ADDRESS, "10000");
     await parameters.setGrace(ZERO_ADDRESS, "259200");
     await parameters.setLockup(ZERO_ADDRESS, "604800");
-    await parameters.setMindate(ZERO_ADDRESS, "604800");
+    await parameters.setMinDate(ZERO_ADDRESS, "604800");
     await parameters.setPremiumModel(ZERO_ADDRESS, premium.address);
     await parameters.setWithdrawable(ZERO_ADDRESS, "86400000");
     await parameters.setVault(dai.address, vault.address);
@@ -286,13 +286,13 @@ describe.skip("CDS", function () {
       expect(await cds.totalSupply()).to.equal(depositAmount);
       expect(await cds.totalLiquidity()).to.equal(depositAmount);
 
-      await verifyVaultStatus({
+      await verifyVaultStatus_legacy({
         vault: vault,
         valueAll: depositAmount,
         totalAttributions: depositAmount,
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: cds.address,
         attributions: depositAmount,
@@ -305,13 +305,13 @@ describe.skip("CDS", function () {
 
       await cds.connect(alice).withdraw(withdrawAmount);
 
-      await verifyVaultStatus({
+      await verifyVaultStatus_legacy({
         vault: vault,
         valueAll: depositAmount.sub(withdrawAmount),
         totalAttributions: depositAmount.sub(withdrawAmount)
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: cds.address,
         attributions: depositAmount.sub(withdrawAmount),
@@ -373,7 +373,7 @@ describe.skip("CDS", function () {
       })
       await cds.connect(alice).requestWithdraw(depositAmount);
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
@@ -387,20 +387,20 @@ describe.skip("CDS", function () {
         amount: depositAmount
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
         rate: defaultRate
       })
 
-      await verifyVaultStatus({
+      await verifyVaultStatus_legacy({
         vault: vault,
         valueAll: depositAmount.mul(2),
         totalAttributions: depositAmount.mul(2),
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: creator.address,
         attributions: ZERO,
@@ -431,7 +431,7 @@ describe.skip("CDS", function () {
 
       await cds.connect(alice).requestWithdraw(depositAmount);
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
@@ -497,28 +497,28 @@ describe.skip("CDS", function () {
         ]
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
         rate: defaultRate
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: market1.address,
         attributions: ZERO,
         underlyingValue: ZERO
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
         attributions: depositAmount,
         underlyingValue: depositAmount
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: cds.address,
         attributions: depositAmount,
@@ -598,14 +598,14 @@ describe.skip("CDS", function () {
         ]
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
         rate: defaultRate
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
         attributions: depositAmount,
@@ -648,14 +648,14 @@ describe.skip("CDS", function () {
         ]
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: depositAmount,
         totalLiquidity: depositAmount,
         rate: defaultRate
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
         attributions: amount,
@@ -681,7 +681,7 @@ describe.skip("CDS", function () {
       })
       await cds.connect(alice).requestWithdraw("990");
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: 990,
         totalLiquidity: 990,
@@ -695,7 +695,7 @@ describe.skip("CDS", function () {
         amount: 1000
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: 990,
         totalLiquidity: 1010,
@@ -732,28 +732,28 @@ describe.skip("CDS", function () {
         ]
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: 990,
         totalLiquidity: 1010,
         rate: "1020202020202020202"
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: market1.address,
         attributions: 0,
         underlyingValue: 0
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
         attributions: 970,
         underlyingValue: 970
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: cds.address,
         attributions: 1010,
@@ -836,14 +836,14 @@ describe.skip("CDS", function () {
         ]
       })
 
-      await verifyCDSStatus({
+      await verifyCDSStatus_legacy({
         cds: cds,
         totalSupply: 990,
         totalLiquidity: 0,
         rate: "0"
       })
 
-      await verifyVaultStatusOf({
+      await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
         attributions: 0,

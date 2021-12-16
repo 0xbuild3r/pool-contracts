@@ -15,8 +15,8 @@ const {
 
   verifyIndexStatus,
 
-  verifyVaultStatus,
-  verifyVaultStatusOf,
+  verifyVaultStatus_legacy,
+  verifyVaultStatusOf_legacy,
   verifyDebtOf,
 
   verifyRate
@@ -353,7 +353,7 @@ describe("Pool", function () {
       debt: m1.debt
     })
 
-    await verifyVaultStatus({
+    await verifyVaultStatus_legacy({
       vault: vault,
       valueAll: g.totalBalance,
       totalAttributions: g.totalBalance,
@@ -379,8 +379,6 @@ describe("Pool", function () {
     //update global and market status => check
     m1.insured = m1.insured.sub(insuredAmount)
     m1.debt = m1.debt.add(payoutAmount)
-
-    g.totalBalance = g.totalBalance.sub(payoutAmount)
 
     if(!m1.marketBalance.isZero()){
       m1.utilizationRate = UTILIZATION_RATE_LENGTH_1E6.mul(m1.insured).div(m1.marketBalance)
@@ -414,7 +412,7 @@ describe("Pool", function () {
       debt: m1.debt
     })
 
-    await verifyVaultStatus({
+    await verifyVaultStatus_legacy({
       vault: vault,
       valueAll: g.totalBalance,
       totalAttributions: g.totalBalance,
@@ -432,6 +430,7 @@ describe("Pool", function () {
 
     m1.debt = m1.debt.sub(amount)
     m1.marketBalance = m1.marketBalance.sub(amount)
+    g.totalBalance = g.totalBalance.sub(amount)
 
     if(!m1.marketBalance.isZero()){
       m1.utilizationRate = UTILIZATION_RATE_LENGTH_1E6.mul(m1.insured).div(m1.marketBalance)
@@ -699,7 +698,7 @@ describe("Pool", function () {
     await parameters.setFeeRate(ZERO_ADDRESS, governanceFeeRate);
     await parameters.setGrace(ZERO_ADDRESS, "259200");
     await parameters.setLockup(ZERO_ADDRESS, "604800");
-    await parameters.setMindate(ZERO_ADDRESS, "604800");
+    await parameters.setMinDate(ZERO_ADDRESS, "604800");
     await parameters.setPremiumModel(ZERO_ADDRESS, premium.address);
     await parameters.setWithdrawable(ZERO_ADDRESS, "2592000");
     await parameters.setVault(usdc.address, vault.address);
@@ -715,28 +714,27 @@ describe("Pool", function () {
     market = await PoolTemplate.attach(marketAddress);
   });
   
-
   beforeEach(async () => {
     snapshotId = await snapshot()
   });
 
   afterEach(async () => {
     //Check status
-    await verifyVaultStatusOf({
+    await verifyVaultStatusOf_legacy({
       vault: vault,
       target: market.address,
       attributions: m1.marketBalance,
       underlyingValue: m1.marketBalance
     })
 
-    await verifyVaultStatusOf({
+    await verifyVaultStatusOf_legacy({
       vault: vault,
       target: gov.address,
       attributions: g.govBalance,
       underlyingValue: g.govBalance
     })
 
-    await verifyVaultStatus({
+    await verifyVaultStatus_legacy({
       vault: vault,
       valueAll: g.totalBalance,
       totalAttributions: g.totalBalance,

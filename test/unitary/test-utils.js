@@ -117,23 +117,9 @@ const verifyPoolsStatusForIndex_legacy = async ({ pools }) => {
 
 
 //======== INDEXs ========//
-const verifyIndexStatus = async ({ index, totalSupply, totalLiquidity, totalAllocatedCredit, leverage, withdrawable, rate }) => {
-    // const totalAllocatedCredit1 = await index.totalAllocatedCredit();
-    // const totalAllocatedCredit2 = await index.totalAllocatedCredit();
-    // console.log('totalAllocatedCredit: ', totalAllocatedCredit1.toString());
-    // console.log('totalAllocatedCredit: ', totalAllocatedCredit2.toString());
-    // console.log('totalAllocatedCredit111111: ', totalAllocatedCredit.toString());
-    // const totalAllocPoint = await index.totalAllocPoint();
-    // console.log('totalAllocPoint: ', totalAllocPoint.toString());
-    // console.log('totalSupply: ', (await index.totalSupply()).toString());
-    // console.log('totalLiquidity: ', (await index.totalLiquidity()).toString());
-    // console.log('leverage: ', (await index.leverage()).toString());
-    // console.log('withdrawable: ', (await index.withdrawable()).toString());
-    // console.log('rate: ', (await index.rate()).toString());
-    console.log('real totalAllocatedCredit: ', (await index.totalAllocatedCredit()).toString());
-    console.log('expect totalAllocatedCredit: ', totalAllocatedCredit.toString());
-    expect(await index.totalSupply()).to.equal(totalSupply);
-    expect(await index.totalLiquidity()).to.equal(totalLiquidity);
+const verifyIndexStatus = async ({index, totalSupply, totalLiquidity, totalAllocatedCredit, leverage, withdrawable, rate}) => {
+    expect(await index.totalSupply()).to.equal(totalSupply); //LP
+    expect(await index.totalLiquidity()).to.equal(totalLiquidity); //USDC
     expect(await index.totalAllocatedCredit()).to.equal(totalAllocatedCredit);
     expect(await index.leverage()).to.equal(leverage);
     expect(await index.withdrawable()).to.equal(withdrawable);
@@ -142,7 +128,21 @@ const verifyIndexStatus = async ({ index, totalSupply, totalLiquidity, totalAllo
 
 
 //======== CDS ========//
-const verifyCDSStatus = async ({ cds, totalSupply, totalLiquidity, rate }) => {
+const verifyCDSStatus = async({cds, surplusPool, crowdPool, totalSupply, totalLiquidity, rate}) => {
+    expect(await cds.surplusPool()).to.equal(surplusPool);
+    expect(await cds.crowdPool()).to.equal(crowdPool);
+    expect(await cds.totalSupply()).to.equal(totalSupply);
+    expect(await cds.totalLiquidity()).to.equal(totalLiquidity);
+    expect(await cds.rate()).to.equal(rate);
+}
+
+const verifyCDSStatusOf = async({cds, targetAddress, valueOfUnderlying, withdrawTimestamp, withdrawAmount}) => {
+    expect(await cds.valueOfUnderlying(targetAddress)).to.equal(valueOfUnderlying);
+    expect((await cds.withdrawalReq(targetAddress)).timestamp).to.equal(withdrawTimestamp);
+    expect((await cds.withdrawalReq(targetAddress)).amount).to.equal(withdrawAmount);
+}
+
+const verifyCDSStatus_legacy = async({cds, totalSupply, totalLiquidity, rate}) => {
     expect(await cds.totalSupply()).to.equal(totalSupply);
     expect(await cds.totalLiquidity()).to.equal(totalLiquidity);
     expect(await cds.rate()).to.equal(rate);
@@ -150,12 +150,26 @@ const verifyCDSStatus = async ({ cds, totalSupply, totalLiquidity, rate }) => {
 
 
 //======== VAULT ========//
-const verifyVaultStatus = async ({ vault, valueAll, totalAttributions }) => {
+const verifyVaultStatus = async({vault, balance, valueAll, totalAttributions, totalDebt}) => {
+    expect(await vault.balance()).to.equal(balance);
+    expect(await vault.valueAll()).to.equal(valueAll);
+    expect(await vault.totalAttributions()).to.equal(totalAttributions);
+    expect(await vault.totalDebt()).to.equal(totalDebt);
+}
+
+const verifyVaultStatusOf = async({vault, target, attributions, underlyingValue, debt}) => {
+    expect(await vault.attributions(target)).to.equal(attributions);
+    expect(await vault.underlyingValue(target)).to.equal(underlyingValue);
+    expect(await vault.debts(target)).to.equal(debt);
+}
+
+
+const verifyVaultStatus_legacy = async({vault, valueAll, totalAttributions}) => {
     expect(await vault.valueAll()).to.equal(valueAll);
     expect(await vault.totalAttributions()).to.equal(totalAttributions);
 }
 
-const verifyVaultStatusOf = async ({ vault, target, attributions, underlyingValue }) => {
+const verifyVaultStatusOf_legacy = async({vault, target, attributions, underlyingValue}) => {
     expect(await vault.attributions(target)).to.equal(attributions);
     expect(await vault.underlyingValue(target)).to.equal(underlyingValue);
 }
@@ -198,9 +212,13 @@ Object.assign(exports, {
 
     //cds
     verifyCDSStatus,
+    verifyCDSStatusOf,
+    verifyCDSStatus_legacy,
 
     //vault
     verifyDebtOf,
+    verifyVaultStatus_legacy,
+    verifyVaultStatusOf_legacy,
     verifyVaultStatus,
     verifyVaultStatusOf,
 
