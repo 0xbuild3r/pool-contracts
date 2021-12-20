@@ -1568,15 +1568,15 @@ describe.skip("Index", function () {
 
   })
 
-  describe.skip("Index parameter configurations (case un-equal allocation)", function () {
+  describe("Index parameter configurations (case un-equal allocation)", function () {
     beforeEach(async () => {
       //Deploy a new pool
       const PoolTemplate = await ethers.getContractFactory("PoolTemplate");
       await factory.createMarket(
         poolTemplate.address,
         "Here is metadata.",
-        [1, 0],
-        [dai.address, dai.address, registry.address, parameters.address]
+        [0],
+        [dai.address, dai.address, registry.address, parameters.address, creator.address]
       );
       const marketAddress5 = await factory.markets(4);
       market3 = await PoolTemplate.attach(marketAddress5);
