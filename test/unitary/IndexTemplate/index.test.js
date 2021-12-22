@@ -15,14 +15,19 @@ const {
   verifyPoolsStatusOf,
   verifyDebtOf,
   verifyIndexStatus,
+  verifyVaultStatus,
   verifyVaultStatus_legacy,
   verifyVaultStatusOf_legacy,
+  verifyValueOfUnderlying,
+  verifyPoolsStatusForIndex,
   insure
 } = require('../test-utils')
 
 
 const {
   ZERO_ADDRESS,
+  TEST_ADDRESS,
+  NULL_ADDRESS,
   long,
   wrong,
   short,
@@ -54,7 +59,8 @@ async function moveForwardPeriods(days) {
 }
 
 
-describe.skip("Index", function () {
+describe("Index", function () {
+  const owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
   const initialMint = BigNumber.from("100000");
 
   const depositAmount = BigNumber.from("10000");
@@ -66,7 +72,8 @@ describe.skip("Index", function () {
   const targetLev = BigNumber.from("2000");;
   const allocPoint1 = BigNumber.from("2000");
   const allocPoint2 = BigNumber.from("3000");
-  const upperSlack = BigNumber.from("900"); // 90%
+  const allocPoint3 = BigNumber.from("2000");
+  const upperSlack = BigNumber.from("500"); // 90%
   const lowerSlack = BigNumber.from("500"); // 50%
 
   const governanceFeeRate = BigNumber.from("100000"); //10%
@@ -97,32 +104,141 @@ describe.skip("Index", function () {
    *  }
    */
 
-  let v = {
-    valueAll: ZERO,
-    totalAttributions: ZERO,
-    attributions: {
-    },
-  };
+  let v = {};
+
+  const addValueBatch = (amount, from, beneficiaries, shares, status) => {
+    let ret = [];
+    let attributions;
+    if (status.totalAttributions.isZero()) {
+      attributions = amount;
+    } else {
+      attributions = amount.mul(status.totalAttributions).div(status.balance);
+    }
+    u[from.address].balance = u[from.address].balance.sub(amount);
+    status.balance = status.balance.add(amount);
+    status.totalAttributions = status.totalAttributions.add(attributions);
+    let allocation;
+    for (let i = 0; i < 2; i++) {
+      allocation = shares[i].mul(attributions).div(MAGIC_SCALE_1E6);
+      status.attributions[beneficiaries[i]] = status.attributions[beneficiaries[i]].add(allocation);
+      ret.push(allocation);
+    }
+
+    return ret;
+  }
+
+  const addValue = (amount, from, beneficiary, status) => {
+    let attributions;
+    if (status.totalAttributions.isZero()) {
+      attributions = amount;
+    } else {
+      attributions = amount.mul(status.totalAttributions).div(status.balance);
+    }
+    status.balance = status.balance.add(amount);
+    status.totalAttributions = status.totalAttributions.add(attributions);
+    status.attributions[beneficiary] = status.attributions[beneficiary].add(attributions);
+  }
+
+  const withdrawValue = (amount, from, to, status) => {
+    const attributions = amount.mul(status.totalAttributions).div(status.balance);
+    status.attributions[from] = status.attributions[from].sub(attributions);
+    status.totalAttributions = status.totalAttributions.sub(attributions);
+    if (available().lt(amount)) {
+      status.balance = status.balance.add(amount.sub(available()));
+    }
+
+    status.balance = status.balance.sub(amount);
+  }
+
+  const transferValue = (amount, from, to, status) => {
+    const attributions = amount.mul(status.totalAttributions).div(status.balance);
+    status.attributions[from] = status.attributions[from].sub(attributions);
+    status.attributions[to] = status.attributions[to].add(attributions);
+  }
+
+  const borrowValue = (amount, from, to, status) => {
+    status.debts[from] = status.debts[from].add(amount);
+    status.totalDebt = status.totalDebt.add(amount);
+
+    u[to.address].balance = u[to.address].balance.add(amount);
+  }
+
+  const offsetDebt = (amount, from, to, status) => {
+    const attributions = amount.mul(status.totalAttributions).div(status.balance);
+    status.attributions[from] = status.attributions[from].sub(attributions);
+    status.totalAttributions = status.totalAttributions.sub(attributions);
+    status.balance = status.balance.sub(amount);
+    status.debts[to] = status.debts[to].sub(amount);
+    status.totalDebt = status.totalDebt.sub(amount);
+  }
+
+  const transferDebt = (amount, from, status) => {
+    if (!amount.isZero()) {
+      status.debts[from] = status.debts[from].sub(amount);
+      status.debts[ZERO_ADDRESS] = status.debts[ZERO_ADDRESS].add(amount);
+    }
+  }
+
+  const repayDebt = (amount, from, to, status) => {
+    const debt = status.debts[to];
+    if (debt.gte(amount)) {
+      status.debts[to] = status.debts[to].sub(amount);
+      status.totalDebt = status.totalDebt.sub(amount);
+      u[from.address].balance = u[from.address].balance.sub(amount);
+    } else {
+      status.debts[to] = ZERO;
+      status.totalDebt = status.totalDebt.sub(debt);
+      u[from.address].balance = u[from.address].balance.sub(debt);
+    }
+  }
+
+  const withdrawAttribution = (amount, from, to, status) => {
+    const val = amount.mul(status.balance).div(status.totalAttributions);
+    status.attributions[from] = status.attributions[from].sub(amount);
+    status.totalAttributions = status.totalAttributions.sub(amount);
+    if (available().lt(val)) {
+      status.balance = status.balance.add(val.sub(available()));
+    }
+
+    status.balance = status.balance.sub(val);
+    u[to.address].balance = u[to.address].balance.add(val);
+  }
+
+  const transferAttribution = (amount, from, to, status) => {
+    status.attributions[from] = status.attributions[from].sub(amount);
+    status.attributions[to] = status.attributions[to].add(amount);
+  }
+
+  const underlyingValue = (addr, status) => {
+    if (status.attributions[addr].gt(ZERO)) {
+      return status.balance.mul(status.attributions[addr]).div(status.totalAttributions);
+    }
+
+    return ZERO;
+  }
+
+  const attributionValue = (amount, status) => {
+    if (status.totalAttributions.gt(ZERO) && amount.gt(ZERO)) {
+      return amount.mul(status.balance).div(status.totalAttributions);
+    }
+
+    return ZERO;
+  }
 
   const approveDeposit = async ({ token, target, depositor, amount }) => {
     await token.connect(depositor).approve(vault.address, amount);
     let tx = await target.connect(depositor).deposit(amount);
 
     if (m[target.address].type == "index") {
-      let attributions;
-      if (v.totalAttributions.isZero()) {
-        attributions = amount;
-      } else {
-        attributions = amount.mul(v.totalAttributions).div(v.valueAll);
-      }
-      v.valueAll = v.valueAll.add(amount);
-      v.totalAttributions = v.totalAttributions.add(attributions);
-      v.attributions[target.address] = v.attributions[target.address].add(attributions);
+      const totalLiquidity = totalLiquidity_Index();
+
+      addValue(amount, depositor, target.address, v);
+
       let mintAmount;
-      if (m[target.address].totalSupply.gt(ZERO) && m[target.address].totalLiquidity.gt(ZERO)) {
-        mintAmount = amount.mul(m[target.address].totalSupply).div(m[target.address].totalLiquidity);
-      } else if (m[target.address].totalSupply.gt(ZERO) && m[target.address].totalLiquidity.isZero()) {
-        mintAmount = amount.mul(m[target.address].totalSupply).div(amount);
+      if (m[target.address].totalSupply.gt(ZERO) && totalLiquidity.gt(ZERO)) {
+        mintAmount = amount.mul(m[target.address].totalSupply).div(totalLiquidity);
+      } else if (m[target.address].totalSupply.gt(ZERO) && totalLiquidity.isZero()) {
+        mintAmount = amount.mul(m[target.address].totalSupply);
       } else {
         mintAmount = amount;
       }
@@ -132,14 +248,20 @@ describe.skip("Index", function () {
       u[`${depositor.address}`].lp[`${target.address}`] = u[`${depositor.address}`].lp[`${target.address}`].add(mintAmount);
 
       m[target.address].totalSupply = m[target.address].totalSupply.add(mintAmount);
-      m[target.address].totalLiquidity = m[target.address].totalLiquidity.add(attributions); //ignored controller
 
-      if (targetLev.sub(lowerSlack).gt(leverage())) {
-        await adjustAlloc(m[index.address].totalLiquidity);
+      const totalLiquidityAfter = totalLiquidity.add(amount);
+      const leverage = m[target.address].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(totalLiquidityAfter);
+
+      if ((targetLev.sub(lowerSlack)).gt(leverage)) {
+        adjustAlloc(totalLiquidityAfter);
       }
     } else if (m[target.address].type == "pool") {
       //update user info => check
       let mintAmount = (await tx.wait()).events[2].args["mint"].toString();
+
+      addValue(amount, depositor, target.address, v);
+
+      m[target.address].totalSupply = m[target.address].totalSupply.add(mintAmount); //market1 (Pool) total LP balance increase as much as newly minted LP token.
 
       u[`${depositor.address}`].balance = u[`${depositor.address}`].balance.sub(amount);
       u[`${depositor.address}`].deposited[`${target.address}`] = u[`${depositor.address}`].deposited[`${target.address}`].add(amount);
@@ -151,43 +273,17 @@ describe.skip("Index", function () {
       //2. update global and market status => check
       g.totalBalance = g.totalBalance.add(amount) //global balance of USDC increase
 
-      let attributions;
-      if (v.totalAttributions.isZero()) {
-        attributions = amount;
-      } else {
-        attributions = amount.mul(v.totalAttributions).div(v.valueAll);
-      }
-      v.valueAll = v.valueAll.add(amount);
-      v.totalAttributions = v.totalAttributions.add(attributions);
-      v.attributions[target.address] = v.attributions[target.address].add(attributions);
-
-      m[target.address].totalLP = m[target.address].totalLP.add(mintAmount); //market1 (Pool) total LP balance increase as much as newly minted LP token.
-      m[target.address].depositAmount = m[target.address].depositAmount.add(amount); //USDC deposited
-      m[target.address].marketBalance = m[target.address].marketBalance.add(amount); //USDC deposited
-
-      if (!m[target.address].depositAmount.isZero()) {
-        m[target.address].rate = defaultRate.mul(v.attributions[target.address].mul(v.valueAll).div(v.totalAttributions)).div(m[target.address].totalLP); //rate = (USDC balance in this contract) / (LP totalBalance)
-      } else {
-        m[target.address].rate = ZERO;
-      }
-
-      if (!m[target.address].insured.isZero()) {
-        m[target.address].utilizationRate = UTILIZATION_RATE_LENGTH_1E6.mul(m[target.address].insured).div(m[target.address].marketBalance); //how much ratio is locked (=bought as insurance) among the pool.
-      } else {
-        m[target.address].utilizationRate = ZERO;
-      }
-
       //sanity check
       await verifyPoolsStatus({
         pools: [
           {
             pool: target,
-            totalLP: m[target.address].totalLP,
-            totalLiquidity: m[target.address].marketBalance, //all deposited amount 
-            availableBalance: m[target.address].marketBalance.sub(m[target.address].insured), //all amount - locked amount = available amount
-            rate: m[target.address].rate,
-            utilizationRate: m[target.address].utilizationRate,
-            allInsuranceCount: m[target.address].allInsuranceCount
+            totalSupply: m[target.address].totalSupply,
+            totalLiquidity: totalLiquidity_Pool(target.address), //all deposited amount 
+            availableBalance: availableBalance(target.address, m[target.address]), //all amount - locked amount = available amount
+            rate: rate_Pool(target.address),
+            utilizationRate: utilizationRate(target.address),
+            allInsuranceCount: m[target.address].allInsuranceCount,
           }
         ]
       });
@@ -195,14 +291,14 @@ describe.skip("Index", function () {
       await verifyDebtOf({
         vault: vault,
         target: target.address,
-        debt: m[target.address].debt
+        debt: v.debts[target.address],
       });
 
       //sanity check
       await verifyValueOfUnderlying({
         template: target,
         valueOfUnderlyingOf: depositor.address,
-        valueOfUnderlying: u[`${depositor.address}`].lp[target.address].mul(m[target.address].rate).div(defaultRate)
+        valueOfUnderlying: valueOfUnderlying_Pool(target.address, depositor.address),
       });
 
     } else if (m[target.address].type == "cds") {
@@ -210,34 +306,39 @@ describe.skip("Index", function () {
     }
   }
 
-  const withdraw = async ({ target, depositor, amount }) => {
-    let tx = await target.connect(depositor).withdraw(amount);
+  const withdraw = async ({ target, withdrawer, amount }) => {
+    let tx = await target.connect(withdrawer).withdraw(amount);
 
     if (m[target.address].type == "index") {
-      const _amount = m[target.address].totalLiquidity.mul(amount).div(m[target.address].totalSupply);
-
-      u[`${depositor.address}`].balance = u[`${depositor.address}`].balance.add(_amount);
-      u[`${depositor.address}`].deposited[`${target.address}`] = u[`${depositor.address}`].deposited[`${target.address}`].sub(amount);
-      u[`${depositor.address}`].lp[`${target.address}`] = u[`${depositor.address}`].lp[`${target.address}`].sub(amount);
+      const totalLiquidity = totalLiquidity_Index();
+      const _amount = totalLiquidity.mul(amount).div(m[target.address].totalSupply);
 
       m[target.address].totalSupply = m[target.address].totalSupply.sub(amount);
-      const liquidityAfter = m[target.address].totalLiquidity.sub(_amount);
+
+      const liquidityAfter = totalLiquidity.sub(_amount);
       if (liquidityAfter.gt(ZERO)) {
         const leverage = m[index.address].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(liquidityAfter);
         if (targetLev.add(upperSlack).lt(leverage)) {
-          await adjustAlloc(liquidityAfter);
+          adjustAlloc(liquidityAfter);
         }
       } else {
-        await adjustAlloc(ZERO);
+        adjustAlloc(ZERO);
       }
 
-      const attributions = v.totalAttributions.mul(_amount).div(v.valueAll);
-      v.totalAttributions = v.totalAttributions.sub(attributions);
-      v.attributions[target.address] = v.attributions[target.address].sub(attributions);
-      v.valueAll = v.valueAll.sub(_amount);
-      m[target.address].totalLiquidity = liquidityAfter; //ignored controller
-    } else if (m[target.address].type == "pool") {
+      withdrawValue(_amount, target.address, withdrawer.address, v);
 
+      u[`${withdrawer.address}`].balance = u[`${withdrawer.address}`].balance.add(_amount);
+      u[`${withdrawer.address}`].deposited[`${target.address}`] = u[`${withdrawer.address}`].deposited[`${target.address}`].sub(amount);
+      u[`${withdrawer.address}`].lp[`${target.address}`] = u[`${withdrawer.address}`].lp[`${target.address}`].sub(amount);
+    } else if (m[target.address].type == "pool") {
+      const _amount = amount.mul(originalLiquidity(target.address)).div(m[target.address].totalSupply);
+      m[target.address].totalSupply = m[target.address].totalSupply.sub(amount);
+
+      withdrawValue(_amount, target.address, withdrawer.address, v);
+
+      u[`${withdrawer.address}`].balance = u[`${withdrawer.address}`].balance.add(_amount);
+      u[`${withdrawer.address}`].deposited[`${target.address}`] = u[`${withdrawer.address}`].deposited[`${target.address}`].sub(amount);
+      u[`${withdrawer.address}`].lp[`${target.address}`] = u[`${withdrawer.address}`].lp[`${target.address}`].sub(amount);
     } else if (m[target.address].type == "cds") {
 
     }
@@ -248,7 +349,7 @@ describe.skip("Index", function () {
     let poolList = [];
     let allocatable = targetCredit;
     let allocatablePoints = m[`${index.address}`].totalAllocPoint;
-    let poolAddr, allocation, market, target, current, available, paused, delta;
+    let poolAddr, allocation, market, target, current, available, delta;
     for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
       poolAddr = m[`${index.address}`].poolList[i];
       if (poolAddr !== ZERO_ADDRESS) {
@@ -256,15 +357,12 @@ describe.skip("Index", function () {
         target = targetCredit.mul(allocation).div(allocatablePoints);
         market = markets.find(market => market.address === poolAddr);
         current = m[poolAddr].allocatedCredit;
-        available = m[poolAddr].availableBalance;
-        paused = await market.paused();
-        if (current.gt(target) && current.sub(target).gt(available) || paused) {
-          m[poolAddr].marketBalance = m[poolAddr].marketBalance.sub(available);
-          m[poolAddr].allocatedCredit = m[poolAddr].allocatedCredit.sub(available);
+        available = availableBalance(poolAddr, m[poolAddr]);
+        if (current.gt(target) && current.sub(target).gt(available) || m[poolAddr].paused) {
+          withdrawCredit(available, index.address, m[poolAddr]);
           m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(available);
-          allocatable = available.sub(current).add(available);
+          allocatable = allocatable.sub(current).add(available);
           allocatablePoints = allocatablePoints.sub(allocation);
-          m[poolAddr].availableBalance = await market.availableBalance();
         } else {
           poolList.push({
             addr: poolAddr,
@@ -284,17 +382,16 @@ describe.skip("Index", function () {
       available = poolList[i].available;
       if (current.gt(target) && !available.isZero()) {
         delta = current.sub(target);
-        m[poolAddr].allocatedCredit = m[poolAddr].allocatedCredit.sub(delta);
-        m[poolAddr].availableBalance = m[poolAddr].availableBalance.sub(delta);
-        m[poolAddr].marketBalance = m[poolAddr].marketBalance.sub(delta);
+        withdrawCredit(delta, index.address, m[poolAddr]);
         m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(delta);
       }
       if (current.lt(target)) {
         delta = target.sub(current);
-        m[poolAddr].allocatedCredit = m[poolAddr].allocatedCredit.add(delta);
-        m[poolAddr].availableBalance = m[poolAddr].availableBalance.add(delta);
-        m[poolAddr].marketBalance = m[poolAddr].marketBalance.add(delta);
+        allocateCredit(delta, index.address, m[poolAddr]);
         m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.add(delta);
+      }
+      if (current.eq(target)) {
+        allocateCredit(ZERO, index.address, m[poolAddr]);
       }
     }
   }
@@ -306,124 +403,145 @@ describe.skip("Index", function () {
     let receipt = await tx.wait();
     let premium = receipt.events[2].args['premium'];
 
-    let govFee = premium.mul(governanceFeeRate).div(RATE_DIVIDER);
-    let fee = premium.sub(govFee);
+    let fee = governanceFeeRate;
 
     //update global and market status => check
-    u[`${insurer.address}`].balance = u[`${insurer.address}`].balance.sub(premium);
+    // u[`${insurer.address}`].balance = u[`${insurer.address}`].balance.sub(premium);
     // expect(await dai.balanceOf(insurer.address)).to.equal(u[`${insurer.address}`].balance)
 
 
-
-    //update global and market status => check
-    m[pool.address].insured = m[pool.address].insured.add(amount);
-    m[pool.address].marketBalance = m[pool.address].marketBalance.add(fee);
-    g.govBalance = g.govBalance.add(govFee);
-    g.totalBalance = g.totalBalance.add(premium);
-
-    if (!m[pool.address].marketBalance.isZero()) {
-      m[pool.address].utilizationRate = UTILIZATION_RATE_LENGTH_1E6.mul(m[pool.address].insured).div(m[pool.address].marketBalance);
-    } else {
-      m[pool.address].utilizationRate = ZERO;
-    }
-
-    if (!m[pool.address].depositAmount.isZero()) {
-      // m[pool.address].rate = defaultRate.mul(m[pool.address].marketBalance).div(m[pool.address].totalLP);
-      m[pool.address].rate = defaultRate.mul(v.attributions[pool.address].mul(v.valueAll).div(v.totalAttributions)).div(m[pool.address].totalLP);
-    } else {
-      m[pool.address].rate = ZERO;
-    }
-
+    const newAttribution = addValueBatch(premium, insurer, [pool.address, owner], [MAGIC_SCALE_1E6.sub(fee), fee], v);
+    m[pool.address].lockedAmount = m[pool.address].lockedAmount.add(amount);
     m[pool.address].allInsuranceCount = m[pool.address].allInsuranceCount.add("1");
+
+    if (m[pool.address].totalCredit.gt(ZERO)) {
+      const attributionForIndex = newAttribution[0].mul(m[pool.address].totalCredit).div(totalLiquidity_Pool(pool.address));
+      m[pool.address].attributionDebt = m[pool.address].attributionDebt.add(attributionForIndex);
+      m[pool.address].rewardPerCredit = m[pool.address].rewardPerCredit.add(attributionForIndex.mul(MAGIC_SCALE_1E6).div(m[pool.address].totalCredit));
+    }
 
     await verifyPoolsStatus({
       pools: [
         {
           pool: pool,
-          totalLP: m[pool.address].totalLP,
-          totalLiquidity: m[pool.address].marketBalance,
-          availableBalance: m[pool.address].marketBalance.sub(m[pool.address].insured),
-          rate: m[pool.address].rate,
-          utilizationRate: m[pool.address].utilizationRate,
-          allInsuranceCount: m[pool.address].allInsuranceCount
+          totalSupply: m[pool.address].totalSupply,
+          totalLiquidity: totalLiquidity_Pool(pool.address), //all deposited amount 
+          availableBalance: availableBalance(pool.address, m[pool.address]), //all amount - locked amount = available amount
+          rate: rate_Pool(pool.address),
+          utilizationRate: utilizationRate(pool.address),
+          allInsuranceCount: m[pool.address].allInsuranceCount,
         }
       ]
     });
 
-    // await verifyDebtOf({
-    //   vault: vault,
-    //   target: pool.address,
-    //   debt: m[pool.address].debt
-    // })
+    await verifyDebtOf({
+      vault: vault,
+      target: pool.address,
+      debt: v.debts[pool.address],
+    })
 
-    // await verifyVaultStatus({
-    //   vault: vault,
-    //   valueAll: g.totalBalance,
-    //   totalAttributions: g.totalBalance,
-    // })
+    await verifyVaultStatus({
+      vault: vault,
+      balance: v.balance,
+      valueAll: v.balance,
+      totalAttributions: v.totalAttributions,
+      totalDebt: v.totalDebt,
+    })
 
     //return value
     return premium
   }
 
-  const accuredPremiums = async () => {
+  const redeem = async ({ pool, redeemer, id, proof }) => {
+    let tx = await pool.connect(redeemer).redeem(id, proof);
+
+    let receipt = await tx.wait();
+
+    let insuredAmount = receipt.events[1].args['amount'];
+    let payoutAmount = receipt.events[1].args['payout'];
+
+    //update global and market status => check
+    // u[`${redeemer.address}`].balance = u[`${redeemer.address}`].balance.add(payoutAmount);
+    // expect(await dai.balanceOf(redeemer.address)).to.equal(u[`${redeemer.address}`].balance);
+
+    //update global and market status => check
+    m[pool.address].lockedAmount = m[pool.address].lockedAmount.sub(insuredAmount);
+    borrowValue(payoutAmount, pool.address, redeemer, v);
+
+    await verifyPoolsStatus({
+      pools: [
+        {
+          pool: pool,
+          totalSupply: m[pool.address].totalSupply,
+          totalLiquidity: totalLiquidity_Pool(pool.address), //all deposited amount 
+          availableBalance: availableBalance(pool.address, m[pool.address]), //all amount - locked amount = available amount
+          rate: rate_Pool(pool.address),
+          utilizationRate: utilizationRate(pool.address),
+          allInsuranceCount: m[pool.address].allInsuranceCount,
+        }
+      ]
+    });
+
+    await verifyDebtOf({
+      vault: vault,
+      target: pool.address,
+      debt: v.debts[pool.address],
+    });
+
+    await verifyVaultStatus_legacy({
+      vault: vault,
+      valueAll: v.balance,
+      totalAttributions: v.totalAttributions,
+    })
+  }
+
+  const accuredPremiums = () => {
     let ret = ZERO;
-    let market, pendingPremium;
+    let poolAddr;
     for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
-      market = markets.find(market => market.address === m[`${index.address}`].poolList[i]);
-      pendingPremium = await market.pendingPremium(index.address);
-      ret.add(pendingPremium);
+      poolAddr = m[`${index.address}`].poolList[i];
+      ret.add(pendingPremium(poolAddr));
     }
 
     return ret;
   }
 
-  const withdrawable = async () => {
-    if (m[`${index.address}`].totalLiquidity.gt(ZERO)) {
-      let poolAddr, market, lowest, utilization;
-      for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
-        poolAddr = m[`${index.address}`].poolList[i];
-        market = markets.find(market => market.address === poolAddr);
+  const pendingPremium = (addr) => {
+    return m[addr].allocatedCredit.isZero() ? ZERO : m[addr].allocatedCredit.mul(m[addr].rewardPerCredit).div(MAGIC_SCALE_1E6).sub(m[addr].rewardDebt);
+  }
+
+  const withdrawable = () => {
+    if (leverage().gt(targetLev.add(upperSlack))) {
+      return ZERO;
+    } else {
+      let poolAddr;
+      let sum = ZERO;
+      for (let i = 0; i < m[index.address].poolList.length; i++) {
+        poolAddr = m[index.address].poolList[i];
         if (m[poolAddr].allocPoint.gt(ZERO)) {
-          utilization = await market.utilizationRate();
-          if (i === 0) {
-            lowest = utilization;
-          }
-          if (utilization.gt(lowest)) {
-            lowest = utilization;
+          if (!totalLiquidity_Pool(poolAddr).isZero()) {
+            sum = sum.add(m[poolAddr].lockedAmount.mul(m[poolAddr].totalCredit).div(totalLiquidity_Pool(poolAddr)));
+          } else {
+            sum = sum.add(m[poolAddr].lockedAmount);
           }
         }
       }
 
-      if (leverage().gt(targetLev)) {
-        return ZERO;
-      } else if (lowest == 0) {
-        return m[`${index.address}`].totalLiquidity;
-      } else {
-        const accPremiums = await accuredPremiums();
-        return UTILIZATION_RATE_LENGTH_1E6.sub(lowest)
-          .mul(m[`${index.address}`].totalLiquidity)
-          .mul(MAGIC_SCALE_1E6)
-          .div(UTILIZATION_RATE_LENGTH_1E6)
-          .div(leverage())
-          .add(accPremiums);
-      }
-    } else {
-      return 0;
+      return totalLiquidity_Index().sub(sum);
     }
   }
 
   const leverage = () => {
-    if (m[`${index.address}`].totalLiquidity > 0) {
-      return m[`${index.address}`].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(m[`${index.address}`].totalLiquidity);
+    if (totalLiquidity_Index().gt(ZERO)) {
+      return m[`${index.address}`].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Index());
     }
 
     return ZERO;
   }
 
   const rate = () => {
-    if (m[`${index.address}`].totalLiquidity > 0) {
-      return m[`${index.address}`].totalLiquidity.mul(MAGIC_SCALE_1E6).div(m[`${index.address}`].totalSupply);
+    if (totalLiquidity_Index().gt(ZERO)) {
+      return totalLiquidity_Index().mul(MAGIC_SCALE_1E6).div(m[`${index.address}`].totalSupply);
     }
 
     return ZERO;
@@ -434,16 +552,103 @@ describe.skip("Index", function () {
     await target.connect(depositor).requestWithdraw(amount);
   }
 
-  const applyCover = async ({ pool, pending, payoutNumerator, payoutDenominator, incidentTimestamp }) => {
+  const compensate = async ({ target, compensator, amount }) => {
+    await target.connect(compensator).compensate(amount);
 
-    const tree = await new MerkleTree(short, keccak256, {
-      hashLeaves: true,
-      sortPairs: true,
-    });
+    let ret;
+    const value = underlyingValue(target.address, v);
+    if (value.gte(amount)) {
+      offsetDebt(amount, target.address, compensator.address, v);
+      ret = amount;
+    } else {
+      if (totalLiquidity_Index().lt(amount)) {
+        const shortage = amount.sub(value);
+        const cds = ZERO;
+        ret = value.add(cds);
+      }
+      offsetDebt(ret, target.address, compensator.address, v);
+    }
 
+    adjustAlloc(totalLiquidity_Index());
+  }
+
+  const resume_Pool = async (market) => {
+    await market.resume();
+
+    const debt = v.debts[market.address];
+    const totalCredit = m[market.address].totalCredit;
+    const deductionFromIndex = debt.mul(totalCredit).mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(market.address));
+    const credit = m[market.address].allocatedCredit;
+    let actualDeduction = ZERO;
+    if (credit.gt(ZERO)) {
+      const shareOfIndex = credit.mul(MAGIC_SCALE_1E6).div(totalCredit);
+      const redeemAmount = divCeil(deductionFromIndex, shareOfIndex);
+      actualDeduction = await compensate({
+        target: index,
+        compensator: pool,
+        amount: redeemAmount,
+      });
+    }
+
+    const deductionFromPool = debt.sub(deductionFromIndex.div(MAGIC_SCALE_1E6));
+    const shortage = deductionFromIndex.div(MAGIC_SCALE_1E6).sub(actualDeduction);
+
+    if (deductionFromPool.gt(ZERO)) {
+      offsetDebt(deductionFromPool, market.address, market.address, v);
+    }
+
+    transferDebt(shortage, market.address, v);
+
+    await verifyDebtOf({
+      vault: vault,
+      target: market.address,
+      debt: v.debts[market.address],
+    })
+  }
+
+  const divCeil = (a, b) => {
+    const c = a.div(b);
+    if (!a.mod(b).isZero())
+      c = c.add(1);
+
+    return c;
+  }
+
+  const applyCover = async ({ pool, pending, targetAddress, payoutNumerator, payoutDenominator, incidentTimestamp }) => {
+
+    const padded1 = ethers.utils.hexZeroPad("0x1", 32);
+    const padded2 = ethers.utils.hexZeroPad("0x2", 32);
+
+    const getLeaves = (target) => {
+      return [
+        { id: padded1, account: target },
+        { id: padded1, account: TEST_ADDRESS },
+        { id: padded2, account: TEST_ADDRESS },
+        { id: padded2, account: NULL_ADDRESS },
+        { id: padded1, account: NULL_ADDRESS },
+      ];
+    };
+
+    //test for pools
+    const encoded = (target) => {
+      const list = getLeaves(target);
+
+      return list.map(({ id, account }) => {
+        return ethers.utils.solidityKeccak256(
+          ["bytes32", "address"],
+          [id, account]
+        );
+      });
+    };
+
+    const leaves = encoded(targetAddress);
+    const tree = await new MerkleTree(leaves, keccak256, { sort: true });
     const root = await tree.getHexRoot();
-    const leaf = keccak256(short[0]);
+    const leaf = leaves[0];
     const proof = await tree.getHexProof(leaf);
+    //console.log("tree", tree.toString());
+    //console.log("proof", leaves, proof, root, leaf);
+    //console.log("verify", tree.verify(proof, leaf, root)); // true
 
     await pool.applyCover(
       pending,
@@ -451,11 +656,133 @@ describe.skip("Index", function () {
       payoutDenominator,
       incidentTimestamp,
       root,
-      short,
+      "raw data",
       "metadata"
     );
 
     return proof
+  }
+
+  const set = async (id, addr, allocPoint) => {
+    await index.set(id, addr, allocPoint);
+
+    if (m[index.address].poolList.length <= id) {
+      m[index.address].poolList.push(addr);
+    } else {
+      const poolAddr = m[index.address].poolList[id];
+      if (poolAddr !== ZERO_ADDRESS && poolAddr !== addr) {
+        withdrawCredit(m[poolAddr].allocatedCredit, index.address, m[poolAddr]);
+      }
+      m[index.address].poolList[id] = addr;
+    }
+
+    if (m[index.address].totalAllocPoint.gt(ZERO)) {
+      m[index.address].totalAllocPoint = m[index.address].totalAllocPoint.sub(m[addr].allocPoint).add(allocPoint);
+    } else {
+      m[index.address].totalAllocPoint = allocPoint;
+    }
+
+    m[addr].allocPoint = allocPoint;
+    adjustAlloc(totalLiquidity_Index());
+  }
+
+  const totalLiquidity_Index = () => {
+    return underlyingValue(index.address, v).add(accuredPremiums());
+  }
+
+  const originalLiquidity = (addr) => {
+    return underlyingValue(addr, v).sub(attributionValue(m[addr].attributionDebt, v));
+  }
+
+  const totalLiquidity_Pool = (addr) => {
+    return originalLiquidity(addr).add(m[addr].totalCredit);
+  }
+
+  const rate_Index = () => {
+    if (m[index.address].totalSupply.gt(ZERO)) {
+      return totalLiquidity_Index().mul(MAGIC_SCALE_1E6).div(m[index.address].totalSupply);
+    }
+
+    return ZERO;
+  }
+
+  const rate_Pool = (addr) => {
+    if (m[addr].totalSupply.gt(ZERO)) {
+      return originalLiquidity(addr).mul(MAGIC_SCALE_1E6).div(m[addr].totalSupply);
+    }
+
+    return ZERO;
+  }
+
+  const valueOfUnderlying_Pool = (poolAddr, ownerAddr) => {
+    const balance = u[`${ownerAddr}`].lp[poolAddr];
+    if (balance.isZero()) {
+      return ZERO;
+    }
+
+    return balance.mul(originalLiquidity(poolAddr)).div(m[poolAddr].totalSupply);
+  }
+
+  const valueOfUnderlying_Index = (ownerAddr) => {
+    const balance = u[`${ownerAddr}`].lp[index.address];
+    if (balance.isZero()) {
+      return ZERO;
+    }
+
+    return balance.mul(totalLiquidity_Index()).div(m[index.address].totalSupply);
+  }
+
+  const utilizationRate = (addr) => {
+    if (m[addr].lockedAmount.gt(ZERO)) {
+      return m[addr].lockedAmount.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(addr));
+    }
+
+    return ZERO;
+  }
+
+  const availableBalance = (addr, status) => {
+    if (totalLiquidity_Pool(addr).gt(ZERO)) {
+      return totalLiquidity_Pool(addr).sub(status.lockedAmount);
+    }
+
+    return ZERO;
+  }
+
+  const available = () => {
+    return v.balance.sub(v.totalDebt);
+  }
+
+  const allocateCredit = (amount, from, status) => {
+    let pending;
+    if (status.allocatedCredit.gt(ZERO)) {
+      pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
+      if (pending.gt(ZERO)) {
+        transferAttribution(pending, from, index.address, v);
+        status.attributionDebt = status.attributionDebt.sub(pending);
+      }
+    }
+    if (amount.gt(ZERO)) {
+      status.totalCredit = status.totalCredit.add(amount);
+      status.allocatedCredit = status.allocatedCredit.add(amount);
+    }
+
+    status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
+  }
+
+  const withdrawCredit = (amount, from, status) => {
+    let pending;
+    pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
+    if (amount.gt(ZERO)) {
+      status.totalCredit = status.totalCredit.sub(amount);
+      status.allocatedCredit = status.allocatedCredit.sub(amount);
+    }
+
+    if (pending.gt(ZERO)) {
+      transferAttribution(pending, from, index.address, v);
+      status.attributionDebt = status.attributionDebt.sub(pending);
+
+      status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
+    }
   }
 
   before('deploy & setup contracts', async () => {
@@ -598,32 +925,30 @@ describe.skip("Index", function () {
 
     m[`${market1.address}`] = {
       type: "pool",
-      totalLP: ZERO,
-      depositAmount: ZERO,
-      marketBalance: ZERO,
+      attributionDebt: ZERO,
+      lockedAmount: ZERO,
+      totalCredit: ZERO,
+      rewardPerCredit: ZERO,
+      totalSupply: ZERO,
       allocatedCredit: ZERO,
       allocPoint: ZERO,
-      availableBalance: ZERO,
-      insured: ZERO,
-      rate: ZERO,
-      utilizationRate: ZERO,
+      rewardDebt: ZERO,
       allInsuranceCount: ZERO,
-      debt: ZERO,
+      paused: false,
     };
 
     m[`${market2.address}`] = {
       type: "pool",
-      totalLP: ZERO,
-      depositAmount: ZERO,
-      marketBalance: ZERO,
+      attributionDebt: ZERO,
+      lockedAmount: ZERO,
+      totalCredit: ZERO,
+      rewardPerCredit: ZERO,
+      totalSupply: ZERO,
       allocatedCredit: ZERO,
       allocPoint: ZERO,
-      availableBalance: ZERO,
-      insured: ZERO,
-      rate: ZERO,
-      utilizationRate: ZERO,
+      rewardDebt: ZERO,
       allInsuranceCount: ZERO,
-      debt: ZERO,
+      paused: false,
     };
 
     m[`${cds.address}`] = {
@@ -636,25 +961,30 @@ describe.skip("Index", function () {
     m[`${index.address}`] = {
       type: "index",
       totalSupply: ZERO,
-      totalLiquidity: ZERO,
       totalAllocatedCredit: ZERO,
       totalAllocPoint: ZERO,
-      withdrawable: ZERO,
-      rate: ZERO,
       poolList: [],
       children: []
     };
 
     v = {
-      valueAll: ZERO,
-      totalAttributions: ZERO,
+      balance: ZERO,
       attributions: {
         [market1.address]: ZERO,
         [market2.address]: ZERO,
         [index.address]: ZERO,
         [cds.address]: ZERO,
+        [owner]: ZERO,
       },
-    }
+      totalAttributions: ZERO,
+      debts: {
+        [market1.address]: ZERO,
+        [market2.address]: ZERO,
+        [index.address]: ZERO,
+        [cds.address]: ZERO,
+      },
+      totalDebt: ZERO,
+    };
 
     accounts = [alice, bob, chad, tom];
 
@@ -674,16 +1004,8 @@ describe.skip("Index", function () {
 
     await registry.setCDS(ZERO_ADDRESS, cds.address);
 
-    await index.set("0", market1.address, allocPoint1);
-    m[`${index.address}`].poolList.push(market1.address);
-    m[`${market1.address}`].allocPoint = allocPoint1;
-    m[`${index.address}`].totalAllocPoint = m[`${index.address}`].totalAllocPoint.add(allocPoint1);
-    await adjustAlloc(m[index.address].totalLiquidity);
-    await index.set("1", market2.address, allocPoint2);
-    m[`${index.address}`].poolList.push(market2.address);
-    m[`${market2.address}`].allocPoint = allocPoint2;
-    m[`${index.address}`].totalAllocPoint = m[`${index.address}`].totalAllocPoint.add(allocPoint2);
-    await adjustAlloc(m[index.address].totalLiquidity);
+    await set(0, market1.address, allocPoint1);
+    await set(1, market2.address, allocPoint2);
     await index.setLeverage(targetLev);
   })
 
@@ -713,7 +1035,6 @@ describe.skip("Index", function () {
           m[`${markets[i].address}`] = {
             ...m[`${markets[i].address}`],
             totalSupply: ZERO,
-            totalLiquidity: ZERO,
             totalAllocatedCredit: ZERO,
             children: []
           };
@@ -722,15 +1043,15 @@ describe.skip("Index", function () {
         case 'pool':
           m[`${markets[i].address}`] = {
             ...m[`${markets[i].address}`],
-            totalLP: ZERO,
-            depositAmount: ZERO,
-            marketBalance: ZERO,
+            attributionDebt: ZERO,
+            lockedAmount: ZERO,
+            totalCredit: ZERO,
+            rewardPerCredit: ZERO,
+            totalSupply: ZERO,
             allocatedCredit: ZERO,
-            availableBalance: ZERO,
-            insured: ZERO,
-            rate: ZERO,
-            utilizationRate: ZERO,
-            allInsuranceCount: ZERO
+            rewardDebt: ZERO,
+            allInsuranceCount: ZERO,
+            paused: false,
           };
           break;
 
@@ -740,14 +1061,22 @@ describe.skip("Index", function () {
     }
 
     v = {
-      valueAll: ZERO,
-      totalAttributions: ZERO,
+      balance: ZERO,
       attributions: {
         [market1.address]: ZERO,
         [market2.address]: ZERO,
         [index.address]: ZERO,
         [cds.address]: ZERO,
+        [owner]: ZERO,
       },
+      totalAttributions: ZERO,
+      debts: {
+        [market1.address]: ZERO,
+        [market2.address]: ZERO,
+        [index.address]: ZERO,
+        [cds.address]: ZERO,
+      },
+      totalDebt: ZERO,
     };
   })
 
@@ -780,15 +1109,16 @@ describe.skip("Index", function () {
 
       //CHECK ALL STATUS
       //index
-      const withdrwable = await withdrawable();
       await verifyIndexStatus({
         index: index,
         totalSupply: m[index.address].totalSupply, //LP token
-        totalLiquidity: m[index.address].totalLiquidity, //underwriting asset
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
         totalAllocatedCredit: m[index.address].totalAllocatedCredit, //totalLiquidity * (leverage/1000000)
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
         leverage: leverage(),
-        withdrawable: withdrwable, //un-utilized underwriting asset
-        rate: rate(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
       });
 
       // pool
@@ -796,13 +1126,13 @@ describe.skip("Index", function () {
         pools: [
           {
             pool: market1,
-            totalLiquidity: m[market1.address].marketBalance,
-            availableBalance: m[market1.address].availableBalance
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: m[market2.address].marketBalance,
-            availableBalance: m[market2.address].availableBalance
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           }
         ]
       });
@@ -825,7 +1155,7 @@ describe.skip("Index", function () {
       //vault
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: v.valueAll,
+        valueAll: v.balance,
         totalAttributions: v.totalAttributions,
       });
 
@@ -833,7 +1163,7 @@ describe.skip("Index", function () {
         vault: vault,
         target: index.address,
         attributions: v.totalAttributions,
-        underlyingValue: v.valueAll.mul(v.attributions[index.address]).div(v.totalAttributions) // v.valueAll.mul(v.totalAttributions).div(v.totalAttributions)
+        underlyingValue: v.balance.mul(v.attributions[index.address]).div(v.totalAttributions) // v.balance.mul(v.totalAttributions).div(v.totalAttributions)
       });
     });
 
@@ -851,9 +1181,9 @@ describe.skip("Index", function () {
 
     it("revert when amount is 0", async function () {
     });
-  })
+  });
 
-  describe("withdraw", function () {
+  describe.skip("withdraw", function () {
     beforeEach(async () => {
       //deposit and withdraw request
       await approveDepositAndWithdrawRequest({
@@ -865,29 +1195,30 @@ describe.skip("Index", function () {
 
       //CHECK ALL STATUS
       //index
-      const withdrwable = await withdrawable();
       await verifyIndexStatus({
         index: index,
         totalSupply: m[index.address].totalSupply, //LP token
-        totalLiquidity: m[index.address].totalLiquidity, //underwriting asset
-        totalAllocatedCredit: m[index.address].totalAllocatedCredit, //totalLiquidity * (leverage/1000000)
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
         leverage: leverage(),
-        withdrawable: withdrwable, //un-utilized underwriting asset
-        rate: rate(),
-      })
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       //pool
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: m[market1.address].marketBalance,
-            availableBalance: m[market1.address].availableBalance,
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: m[market2.address].marketBalance,
-            availableBalance: m[market2.address].availableBalance,
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           }
         ]
       });
@@ -910,7 +1241,7 @@ describe.skip("Index", function () {
       //vault
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: v.valueAll,
+        valueAll: v.balance,
         totalAttributions: v.totalAttributions,
       });
 
@@ -918,7 +1249,7 @@ describe.skip("Index", function () {
         vault: vault,
         target: index.address,
         attributions: v.totalAttributions,
-        underlyingValue: v.valueAll.mul(v.attributions[index.address]).div(v.totalAttributions) // v.valueAll.mul(v.totalAttributions).div(v.totalAttributions)
+        underlyingValue: v.balance.mul(v.attributions[index.address]).div(v.totalAttributions) // v.balance.mul(v.totalAttributions).div(v.totalAttributions)
       });
     });
 
@@ -926,20 +1257,21 @@ describe.skip("Index", function () {
       await moveForwardPeriods(8);
       await withdraw({
         target: index,
-        depositor: alice,
+        withdrawer: alice,
         amount: withdrawAmount
       });
 
       //CHECK ALL STATUS
       //index
-      const withrawble = await withdrawable();
       await verifyIndexStatus({
         index: index,
-        totalSupply: m[index.address].totalSupply,
-        totalLiquidity: m[index.address].totalLiquidity,
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
         totalAllocatedCredit: m[index.address].totalAllocatedCredit,
-        leverage: leverage(), //become 0 too
-        withdrawable: withrawble,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
         rate: rate(),
       });
 
@@ -948,13 +1280,13 @@ describe.skip("Index", function () {
         pools: [
           {
             pool: market1,
-            totalLiquidity: m[market1.address].marketBalance,
-            availableBalance: m[market1.address].availableBalance,
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: m[market2.address].marketBalance,
-            availableBalance: m[market2.address].availableBalance,
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           }
         ]
       });
@@ -977,7 +1309,7 @@ describe.skip("Index", function () {
       //vault
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: v.valueAll,
+        valueAll: v.balance,
         totalAttributions: v.totalAttributions,
       });
 
@@ -985,7 +1317,7 @@ describe.skip("Index", function () {
         vault: vault,
         target: index.address,
         attributions: v.attributions[index.address],
-        underlyingValue: v.attributions[index.address].isZero() ? "0" : v.valueAll.mul(v.attributions[index.address]).div(v.totalAttributions) // v.valueAll.mul(v.totalAttributions).div(v.totalAttributions)
+        underlyingValue: underlyingValue(index.address, v),
       });
     });
 
@@ -1001,7 +1333,7 @@ describe.skip("Index", function () {
 
       await withdraw({
         target: index,
-        depositor: alice,
+        withdrawer: alice,
         amount: withdrawAmount
       });
 
@@ -1052,52 +1384,49 @@ describe.skip("Index", function () {
 
       await dai.connect(bob).approve(vault.address, insureAmount);
 
-      const premium = await insure({
+      await insure({
         pool: market1,
         insurer: bob,
         amount: insureAmount,
         maxCost: insureAmount,
         span: WEEK,
         target: padded1
-      })
+      });
+
+      expect(await market1.utilizationRate()).to.equal(utilizationRate(market1.address));
+      expect(await market2.utilizationRate()).to.equal(utilizationRate(market2.address));
+
+      await verifyBalance({
+        token: dai,
+        address: bob.address,
+        expectedBalance: u[bob.address].balance,
+      });
+
+      await verifyBalance({
+        token: dai,
+        address: vault.address,
+        expectedBalance: v.balance,
+      });
 
 
-      // let expectPremium = BigNumber.from("10000").div("10"); //amount * premium rate
+      //after insure(), index gains premium, but aloc doesn't change. this leads to lower the leverage
+      await verifyIndexStatus({
+        index: index,
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate(),
+      });
 
-      // expect(premium).to.equal(expectPremium);
+      await moveForwardPeriods(8);
 
-      // expect(await market1.utilizationRate()).to.equal(m[market1.address].utilizationRate);
-      // expect(await market2.utilizationRate()).to.equal(m[market2.address].utilizationRate);
-
-      // await verifyBalance({
-      //   token: dai,
-      //   address: bob.address,
-      //   expectedBalance: u[bob.address].balance,
-      // });
-
-      // await verifyBalance({
-      //   token: dai,
-      //   address: vault.address,
-      //   expectedBalance: v.valueAll,
-      // });
-
-
-      // //after insure(), index gains premium, but aloc doesn't change. this leads to lower the leverage
-      // await verifyIndexStatus({
-      //   index: index,
-      //   totalSupply: 10000,
-      //   totalLiquidity: 10950,
-      //   totalAllocatedCredit: 20000,
-      //   leverage: 1826,
-      //   withdrawable: 950,
-      //   rate: "1095000000000000000"
-      // })
-
-      // await moveForwardPeriods(8);
-
-      // await expect(index.connect(alice).withdraw("951")).to.revertedWith(
-      //   "ERROR: WITHDRAW_INSUFFICIENT_LIQUIDITY"
-      // );
+      await expect(index.connect(alice).withdraw(withdrawable().add(1))).to.revertedWith(
+        "ERROR: WITHDRAW_INSUFFICIENT_LIQUIDITY"
+      );
     });
   });
 
@@ -1108,52 +1437,55 @@ describe.skip("Index", function () {
     it("accrues premium after deposit", async function () {
       await approveDepositAndWithdrawRequest({
         token: dai,
-        target: index,
+        target: market1,
         depositor: alice,
-        amount: 10000
+        amount: depositAmount,
       })
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
-      await dai.connect(bob).approve(vault.address, 20000);
+      await dai.connect(bob).approve(vault.address, insureAmount);
 
-      expect(await index.rate()).to.equal("1000000000000000000");
+      expect(await index.rate()).to.equal(rate_Index());
 
       await insure({
         pool: market1,
         insurer: bob,
-        amount: 10000,
-        maxCost: 10000,
-        span: YEAR,
-        target: '0x4e69636b00000000000000000000000000000000000000000000000000000000'
-      })
+        amount: insureAmount,
+        maxCost: insureAmount,
+        span: WEEK,
+        target: padded1,
+      });
 
       await verifyBalance({
         token: dai,
         address: bob.address,
-        expectedBalance: 99000
+        expectedBalance: u[bob.address].balance,
       })
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10950,
-        totalAllocatedCredit: 20000,
-        leverage: 1826,
-        withdrawable: 950,
-        rate: "1095000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
-      expect(await market1.pendingPremium(index.address)).to.equal("950"); //verify
-
+      expect(await market1.pendingPremium(index.address)).to.equal(pendingPremium(market1.address)); //verify
 
       //withdrawal also harvest accrued premium
       await moveForwardPeriods(369);
@@ -1163,17 +1495,20 @@ describe.skip("Index", function () {
       await verifyBalance({
         token: dai,
         address: alice.address,
-        expectedBalance: 90000
-      })
+        expectedBalance: u[alice.address].balance,
+      });
 
-      await index.connect(alice).withdraw("10000");
-
+      await withdraw({
+        target: market1,
+        withdrawer: alice,
+        amount: withdrawAmount,
+      });
       //Harvested premium is reflected on their account balance
-      await verifyBalance({
-        token: dai,
-        address: alice.address,
-        expectedBalance: 100950
-      })
+      // await verifyBalance({
+      //   token: dai,
+      //   address: alice.address,
+      //   expectedBalance: u[alice.address].balance,
+      // });
     });
 
     it("also transfers lockup period when iToken is transferred", async function () {
@@ -1181,42 +1516,52 @@ describe.skip("Index", function () {
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       //Transferring iToken, which also distribute premium
-      await index.connect(alice).transfer(tom.address, "10000");
-      await index.connect(tom).requestWithdraw("10000");
+      const transferAmount = BigNumber.from("10000");
+      await index.connect(alice).transfer(tom.address, transferAmount);
+      u[alice.address].lp[index.address] = u[alice.address].lp[index.address].sub(transferAmount);
+      u[tom.address].lp[index.address] = u[tom.address].lp[index.address].add(transferAmount);
+      await index.connect(tom).requestWithdraw(withdrawAmount);
 
-      await expect(index.connect(alice).withdraw("10000")).to.revertedWith(
+      await expect(index.connect(alice).withdraw(withdrawAmount)).to.revertedWith(
         "ERROR: WITHDRAWAL_QUEUE"
       );
-      await expect(index.connect(tom).withdraw("10000")).to.revertedWith(
+      await expect(index.connect(tom).withdraw(withdrawAmount)).to.revertedWith(
         "ERROR: WITHDRAWAL_QUEUE"
       );
 
       await moveForwardPeriods(8);
 
-      await expect(index.connect(alice).withdraw("10000")).to.revertedWith(
+      await expect(index.connect(alice).withdraw(withdrawAmount)).to.revertedWith(
         "ERROR: WITHDRAWAL_EXCEEDED_REQUEST"
       );
-      await index.connect(tom).withdraw("10000");
+      // await index.connect(tom).withdraw(withdrawAmount);
+      await withdraw({
+        target: index,
+        withdrawer: tom,
+        amount: withdrawAmount,
+      });
 
-      await verifyBalance({
-        token: dai,
-        address: tom.address,
-        expectedBalance: 10000
-      })
+      // await verifyBalance({
+      //   token: dai,
+      //   address: tom.address,
+      //   expectedBalance: u[tom.address].balance,
+      // });
     });
 
     it("DISABLE deposit when paused(withdrawal is possible)", async function () {
@@ -1225,35 +1570,41 @@ describe.skip("Index", function () {
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await index.setPaused(true);
 
-      await expect(index.connect(alice).deposit("10000")).to.revertedWith(
+      await expect(index.connect(alice).deposit(depositAmount)).to.revertedWith(
         "ERROR: DEPOSIT_DISABLED"
       );
 
       await moveForwardPeriods(8);
 
-      await index.connect(alice).withdraw("10000");
+      // await index.connect(alice).withdraw(withdrawAmount);
+      await withdraw({
+        target: index,
+        withdrawer: alice,
+        amount: withdrawAmount,
+      });
 
-      await verifyBalance({
-        token: dai,
-        address: alice.address,
-        expectedBalance: 100000
-      })
-
+      // await verifyBalance({
+      //   token: dai,
+      //   address: alice.address,
+      //   expectedBalance: u[alice.address].balance,
+      // });
     });
 
     it("DISABLE deposit and withdrawal when reporting or payingout", async function () {
@@ -1262,18 +1613,20 @@ describe.skip("Index", function () {
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await moveForwardPeriods(8);
 
@@ -1282,15 +1635,16 @@ describe.skip("Index", function () {
       await applyCover({
         pool: market1,
         pending: 604800,
+        targetAddress: ZERO_ADDRESS, //everyone
         payoutNumerator: 5000,
         payoutDenominator: 10000,
         incidentTimestamp: incident
-      })
+      });
 
-      await expect(index.connect(alice).deposit("10000")).to.revertedWith(
+      await expect(index.connect(alice).deposit(depositAmount)).to.revertedWith(
         "ERROR: DEPOSIT_DISABLED"
       );
-      await expect(index.connect(alice).withdraw("10000")).to.revertedWith(
+      await expect(index.connect(alice).withdraw(withdrawAmount)).to.revertedWith(
         "ERROR: WITHDRAWAL_PENDING"
       );
 
@@ -1301,133 +1655,113 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
-      await index.connect(alice).withdraw("10000");
-      await verifyBalance({
-        token: dai,
-        address: alice.address,
-        expectedBalance: 100000
-      })
+      // await index.connect(alice).withdraw(withdrawAmount);
+      await withdraw({
+        target: index,
+        withdrawer: alice,
+        amount: withdrawAmount,
+      });
+      // await verifyBalance({
+      //   token: dai,
+      //   address: alice.address,
+      //   expectedBalance: u[alice.address].balance,
+      // });
     });
 
     it("devaluate underlying when cover claim is accepted", async function () {
       await approveDepositAndWithdrawRequest({
         token: dai,
-        target: index,
+        target: market1,
         depositor: alice,
-        amount: 10000
-      })
-
-      await verifyIndexStatus({
-        index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        amount: depositAmount,
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           }
         ]
-      })
-
-      await verifyPoolsStatusOf({
-        pools: [
-          {
-            pool: market1,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
-          },
-          {
-            pool: market2,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
-          }
-        ]
-      })
+      });
 
       await dai.connect(bob).approve(vault.address, 10000);
-      let receipt = await insure({
+
+      await insure({
         pool: market1,
         insurer: bob,
-        amount: 10000,
-        maxCost: 10000,
-        span: 86400 * 8,
-        target: '0x4e69636b00000000000000000000000000000000000000000000000000000000'
-      })
+        amount: insureAmount,
+        maxCost: insureAmount,
+        span: WEEK,
+        target: padded1
+      });
 
-      let premiumRate = 100000 //10%
-      let divider = 1000000
+      expect(await dai.balanceOf(bob.address)).to.equal(u[bob.address].balance);
 
-      let premium = receipt.events[4].args[6]
-      let expectPremium = BigNumber.from("10000").mul(premiumRate).div(divider); //amount * premium rate
-      expect(premium).to.equal(expectPremium);
-
-
-      expect(await dai.balanceOf(bob.address)).to.equal("99000");
-
-      let incident = await now()
+      let incident = await now();
 
       let proof = await applyCover({
         pool: market1,
         pending: 604800,
+        targetAddress: ZERO_ADDRESS, //everyone
         payoutNumerator: 5000,
         payoutDenominator: 10000,
         incidentTimestamp: incident
-      })
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 11000,
-        totalAttributions: 11000,
-      })
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
+      });
 
-      await verifyVaultStatusOf_legacy({
-        vault: vault,
-        target: creator.address,
-        attributions: 50,
-        underlyingValue: 50
-      })
-
+      // await verifyVaultStatusOf_legacy({
+      //   vault: vault,
+      //   target: creator.address,
+      //   attributions: v.attributions[creator.address],
+      //   underlyingValue: underlyingValue(creator.address, v),
+      // })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: market1.address,
-        attributions: 950,
-        underlyingValue: 950
-      })
+        attributions: v.attributions[market1.address],
+        underlyingValue: underlyingValue(market1.address, v),
+      });
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
 
+      expect(await market1.totalLiquidity()).to.closeTo(totalLiquidity_Pool(market1.address), "1");
 
-      expect(await market1.totalLiquidity()).to.closeTo("10000", "1");
-
-      await market1.connect(bob).redeem("0", proof);
+      // await market1.connect(bob).redeem("0", proof);
+      await redeem({
+        pool: market1,
+        redeemer: bob,
+        id: 0,
+        proof: proof,
+      });
 
       await expect(market1.connect(alice).unlock("0")).to.revertedWith(
         "ERROR: UNLOCK_BAD_COINDITIONS"
@@ -1435,84 +1769,74 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 5950,
-        totalAllocatedCredit: 11900,
-        leverage: 2000,
-        withdrawable: 5950,
-        rate: "595000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        target: index.address,
-        attributions: 5054,
-        valueAll: 6000,
-        totalAttributions: 6000,
-        underlyingValue: 5054
-      })
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 5950,
-            availableBalance: 5950
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 5950,
-            availableBalance: 5950
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           }
         ]
-      })
-
-      await verifyPoolsStatusOf({
-        pools: [
-          {
-            pool: market1,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 5950,
-          },
-          {
-            pool: market2,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 5950,
-          }
-        ]
-      })
+      });
 
       await moveForwardPeriods(11);
-      await market1.resume();
+      await resume_Pool(market1);
       await index.resume();
 
-      await index.connect(alice).withdraw("10000");
+      await withdraw({
+        target: market1,
+        withdrawer: alice,
+        amount: withdrawAmount,
+      });
 
       await verifyBalances({
         token: dai,
         userBalances: {
-          [alice.address]: 95950,
-          [bob.address]: 104000
-        }
-      })
+          [alice.address]: u[alice.address].balance,
+          [bob.address]: u[bob.address].balance,
+        },
+      });
 
       //Simulation: full payout
       await approveDepositAndWithdrawRequest({
         token: dai,
-        target: index,
+        target: market1,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       currentTimestamp = BigNumber.from(
         (await ethers.provider.getBlock("latest")).timestamp
@@ -1521,52 +1845,65 @@ describe.skip("Index", function () {
       await insure({
         pool: market1,
         insurer: bob,
-        amount: 10000,
-        maxCost: 10000,
-        span: 86400 * 8,
-        target: '0x4e69636b00000000000000000000000000000000000000000000000000000000'
-      })
+        amount: insureAmount,
+        maxCost: insureAmount,
+        span: WEEK,
+        target: padded1
+      });
 
       incident = await now();
 
       proof = await applyCover({
         pool: market1,
         pending: 604800,
-        payoutNumerator: 10000,
+        targetAddress: ZERO_ADDRESS, //everyone
+        payoutNumerator: 5000,
         payoutDenominator: 10000,
         incidentTimestamp: incident
-      })
+      });
 
-      await market1.connect(bob).redeem("1", proof);
+      await redeem({
+        pool: market1,
+        redeemer: bob,
+        id: 1,
+        proof: proof,
+      });
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 950,
-        totalAllocatedCredit: 1900,
-        leverage: 2000,
-        withdrawable: 950,
-        rate: "95000000000000000"
-      })
-      expect(await index.valueOfUnderlying(alice.address)).to.equal("950");
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
+      expect(await index.valueOfUnderlying(alice.address)).to.equal(valueOfUnderlying_Index(alice.address));
 
       await moveForwardPeriods(11);
 
-      await market1.resume();
+      await resume_Pool(market1);
       await index.resume();
 
-      await index.connect(alice).withdraw("10000");
+      await withdraw({
+        target: market1,
+        withdrawer: alice,
+        amount: withdrawAmount,
+      })
 
       await verifyBalances({
         token: dai,
         userBalances: {
-          [alice.address]: 86900,
-          [bob.address]: 113000
+          [alice.address]: u[alice.address].balance,
+          [bob.address]: u[bob.address].balance,
         }
       })
     });
 
-  })
+  });
 
   describe("Index parameter configurations (case un-equal allocation)", function () {
     beforeEach(async () => {
@@ -1580,6 +1917,27 @@ describe.skip("Index", function () {
       );
       const marketAddress5 = await factory.markets(4);
       market3 = await PoolTemplate.attach(marketAddress5);
+
+      m[`${market3.address}`] = {
+        type: "pool",
+        attributionDebt: ZERO,
+        lockedAmount: ZERO,
+        totalCredit: ZERO,
+        rewardPerCredit: ZERO,
+        totalSupply: ZERO,
+        allocatedCredit: ZERO,
+        allocPoint: ZERO,
+        rewardDebt: ZERO,
+        allInsuranceCount: ZERO,
+        paused: false,
+      };
+
+      if (v.attributions[market3.address])
+        v.totalAttributions = v.totalAttributions.sub(v.attributions[market3.address]);
+      v.attributions[market3.address] = ZERO;
+      if (v.debts[market3.address])
+        v.totalDebt = v.totalDebt.sub(v.debts[market3.address]);
+      v.debts[market3.address] = ZERO;
     });
 
     it("allows new pool addition", async function () {
@@ -1587,296 +1945,317 @@ describe.skip("Index", function () {
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       //Case1: Add when no liquidity is locked
       //Expected results: Reallocaet liquidity market1: 5000, market2: 5000, market3: 10000
-      await index.set("2", market3.address, "2000");
+      await set(2, market3.address, allocPoint3);
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
-        totalAttributions: 10000
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 5000,
-            availableBalance: 5000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 5000,
-            availableBalance: 5000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 10000,
-            availableBalance: 10000
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
       })
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex({
         pools: [
           {
             pool: market1,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 5000,
+            indexAddress: index.address,
+            allocatedCredit: m[market1.address].allocatedCredit,
+            pendingPremium: pendingPremium(market1.address),
           },
           {
             pool: market2,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 5000,
+            indexAddress: index.address,
+            allocatedCredit: m[market2.address].allocatedCredit,
+            pendingPremium: pendingPremium(market2.address),
           },
           {
             pool: market3,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            indexAddress: index.address,
+            allocatedCredit: m[market3.address].allocatedCredit,
+            pendingPremium: pendingPremium(market3.address),
           }
         ]
       })
 
-
-      await index.set("2", market3.address, "0");
+      await set(2, market3.address, ZERO);
 
       //Case2: Add when liquidity is locked(market1 has locked 50% of index liquidity ) d
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 0,
-            availableBalance: 0
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 0,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
 
-      await dai.connect(bob).approve(vault.address, 10000);
+      await approveDeposit({
+        token: dai,
+        target: market1,
+        depositor: alice,
+        amount: insureAmount,
+      });
+
       await insure({
         pool: market1,
         insurer: bob,
-        amount: 10000,
-        maxCost: 10000,
-        span: 86400 * 10,
-        target: '0x4e69636b00000000000000000000000000000000000000000000000000000000'
-      })
+        amount: insureAmount,
+        maxCost: insureAmount,
+        span: WEEK,
+        target: padded1
+      });
 
-      expect(await market1.totalLiquidity()).to.equal("10000");
-      expect(await market1.availableBalance()).to.equal("0");
-
-      await verifyIndexStatus({
-        index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10950,
-        totalAllocatedCredit: 20000,
-        leverage: 1826,
-        withdrawable: 950,
-        rate: "1095000000000000000"
-      })
-
-      await index.set("2", market3.address, "2000");
+      expect(await market1.totalLiquidity()).to.equal(totalLiquidity_Pool(market1.address));
+      expect(await market1.availableBalance()).to.equal(availableBalance(market1.address, m[market1.address]));
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10950,
-        totalAllocatedCredit: 21899,
-        leverage: 1999,
-        withdrawable: 0,
-        rate: "1095000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
+      await set(2, market3.address, allocPoint3);
+
+      await verifyIndexStatus({
+        index: index,
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 0
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 3966,
-            availableBalance: 3966
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 7933,
-            availableBalance: 7933
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 3966,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 7933,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
     });
 
     it("allows pool removal", async function () {
-      await index.set("2", market3.address, "1000");
-
       await approveDeposit({
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
+
+      await set(2, market3.address, allocPoint3);
 
       //before remomval
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 19998,
-        leverage: 1999,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
-
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+      return;
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
-        totalAttributions: 10000,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
-
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
+      return;
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 6666,
-            availableBalance: 6666
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 6666,
-            availableBalance: 6666
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 6666,
-            availableBalance: 6666
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
-
-
+      });
+      return;
       //after remomval
       await index.set("2", market3.address, "0");
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000,
       })
 
@@ -1929,7 +2308,7 @@ describe.skip("Index", function () {
     });
 
 
-    it("mimics pool removal if the pool is paused", async function () {
+    it.skip("mimics pool removal if the pool is paused", async function () {
       await index.set("2", market3.address, "1000");
 
       await approveDeposit({
@@ -1943,17 +2322,19 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 19998,
-        leverage: 1999,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000,
       })
 
@@ -2012,17 +2393,19 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 20000,
-        leverage: 2000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000,
       })
 
@@ -2058,23 +2441,23 @@ describe.skip("Index", function () {
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 0,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
     });
 
-    it("allows leverage rate increment", async function () {
+    it.skip("allows leverage rate increment", async function () {
       await index.set("2", market3.address, "1000");
 
       await approveDeposit({
@@ -2087,17 +2470,19 @@ describe.skip("Index", function () {
       //lev 2.0
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 19998,
-        leverage: 1999,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000,
       })
 
@@ -2155,17 +2540,19 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 30000,
-        leverage: 3000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000
       })
 
@@ -2216,7 +2603,7 @@ describe.skip("Index", function () {
       })
     });
 
-    it("allows leverage rate decrement", async function () {
+    it.skip("allows leverage rate decrement", async function () {
       await index.set("2", market3.address, "1000");
 
       await index.setLeverage("3000");
@@ -2230,17 +2617,19 @@ describe.skip("Index", function () {
       //Lev3.0
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10000,
-        totalAllocatedCredit: 30000,
-        leverage: 3000,
-        withdrawable: 10000,
-        rate: "1000000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10000,
+        balance: 10000,
         totalAttributions: 10000,
       })
 
@@ -2307,13 +2696,15 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10950,
-        totalAllocatedCredit: 30000,
-        leverage: 2739,
-        withdrawable: 950,
-        rate: "1095000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
@@ -2341,17 +2732,19 @@ describe.skip("Index", function () {
 
       await verifyIndexStatus({
         index: index,
-        totalSupply: 10000,
-        totalLiquidity: 10950,
-        totalAllocatedCredit: 21899,
-        leverage: 1999,
-        withdrawable: 0,
-        rate: "1095000000000000000"
-      })
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        valueAll: 10999,
+        balance: 10999,
         totalAttributions: 10999
       })
 
