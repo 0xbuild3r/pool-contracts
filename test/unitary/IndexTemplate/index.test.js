@@ -69,7 +69,7 @@ describe("Index", function () {
   const defaultRate = BigNumber.from("1000000"); //initial rate between USDC and LP token
   const insureAmount = BigNumber.from("10000");
   const maxCost = BigNumber.from("10000");
-  const targetLev = BigNumber.from("2000");;
+  let targetLev = BigNumber.from("2000");;
   const allocPoint1 = BigNumber.from("2000");
   const allocPoint2 = BigNumber.from("3000");
   const allocPoint3 = BigNumber.from("2000");
@@ -115,6 +115,7 @@ describe("Index", function () {
       attributions = amount.mul(status.totalAttributions).div(status.balance);
     }
     u[from.address].balance = u[from.address].balance.sub(amount);
+
     status.balance = status.balance.add(amount);
     status.totalAttributions = status.totalAttributions.add(attributions);
     let allocation;
@@ -326,7 +327,6 @@ describe("Index", function () {
       }
 
       withdrawValue(_amount, target.address, withdrawer.address, v);
-
       u[`${withdrawer.address}`].balance = u[`${withdrawer.address}`].balance.add(_amount);
       u[`${withdrawer.address}`].deposited[`${target.address}`] = u[`${withdrawer.address}`].deposited[`${target.address}`].sub(amount);
       u[`${withdrawer.address}`].lp[`${target.address}`] = u[`${withdrawer.address}`].lp[`${target.address}`].sub(amount);
@@ -405,11 +405,6 @@ describe("Index", function () {
 
     let fee = governanceFeeRate;
 
-    //update global and market status => check
-    // u[`${insurer.address}`].balance = u[`${insurer.address}`].balance.sub(premium);
-    // expect(await dai.balanceOf(insurer.address)).to.equal(u[`${insurer.address}`].balance)
-
-
     const newAttribution = addValueBatch(premium, insurer, [pool.address, owner], [MAGIC_SCALE_1E6.sub(fee), fee], v);
     m[pool.address].lockedAmount = m[pool.address].lockedAmount.add(amount);
     m[pool.address].allInsuranceCount = m[pool.address].allInsuranceCount.add("1");
@@ -461,12 +456,10 @@ describe("Index", function () {
     let payoutAmount = receipt.events[1].args['payout'];
 
     //update global and market status => check
-    // u[`${redeemer.address}`].balance = u[`${redeemer.address}`].balance.add(payoutAmount);
-    // expect(await dai.balanceOf(redeemer.address)).to.equal(u[`${redeemer.address}`].balance);
-
-    //update global and market status => check
     m[pool.address].lockedAmount = m[pool.address].lockedAmount.sub(insuredAmount);
     borrowValue(payoutAmount, pool.address, redeemer, v);
+
+    expect(await dai.balanceOf(redeemer.address)).to.equal(u[`${redeemer.address}`].balance);
 
     await verifyPoolsStatus({
       pools: [
@@ -646,9 +639,6 @@ describe("Index", function () {
     const root = await tree.getHexRoot();
     const leaf = leaves[0];
     const proof = await tree.getHexProof(leaf);
-    //console.log("tree", tree.toString());
-    //console.log("proof", leaves, proof, root, leaf);
-    //console.log("verify", tree.verify(proof, leaf, root)); // true
 
     await pool.applyCover(
       pending,
@@ -823,6 +813,7 @@ describe("Index", function () {
     await dai.mint(chad.address, initialMint);
     await dai.mint(bob.address, initialMint);
     await dai.mint(alice.address, initialMint);
+    await dai.mint(tom.address, initialMint);
 
     await registry.setFactory(factory.address);
 
@@ -1060,24 +1051,18 @@ describe("Index", function () {
       }
     }
 
-    v = {
-      balance: ZERO,
-      attributions: {
-        [market1.address]: ZERO,
-        [market2.address]: ZERO,
-        [index.address]: ZERO,
-        [cds.address]: ZERO,
-        [owner]: ZERO,
-      },
-      totalAttributions: ZERO,
-      debts: {
-        [market1.address]: ZERO,
-        [market2.address]: ZERO,
-        [index.address]: ZERO,
-        [cds.address]: ZERO,
-      },
-      totalDebt: ZERO,
-    };
+    v.balance = ZERO;
+    v.attributions[market1.address] = ZERO;
+    v.attributions[market2.address] = ZERO;
+    v.attributions[index.address] = ZERO;
+    v.attributions[cds.address] = ZERO;
+    v.attributions[owner.address] = ZERO;
+    v.totalAttributions = ZERO;
+    v.debts[market1.address] = ZERO;
+    v.debts[market2.address] = ZERO;
+    v.debts[index.address] = ZERO;
+    v.debts[cds.address] = ZERO;
+    v.totalDebt = ZERO;
   })
 
   describe("Condition", function () {
@@ -1095,7 +1080,7 @@ describe("Index", function () {
     });
   });
 
-  describe.skip("deposit", function () {
+  describe("deposit", function () {
     beforeEach(async () => {
     });
 
@@ -1183,7 +1168,7 @@ describe("Index", function () {
     });
   });
 
-  describe.skip("withdraw", function () {
+  describe("withdraw", function () {
     beforeEach(async () => {
       //deposit and withdraw request
       await approveDepositAndWithdrawRequest({
@@ -1430,14 +1415,14 @@ describe("Index", function () {
     });
   });
 
-  describe.skip("else", function () {
+  describe("else", function () {
     beforeEach(async () => {
     });
 
     it("accrues premium after deposit", async function () {
       await approveDepositAndWithdrawRequest({
         token: dai,
-        target: market1,
+        target: index,
         depositor: alice,
         amount: depositAmount,
       })
@@ -1454,7 +1439,12 @@ describe("Index", function () {
         rate: rate_Index(),
       });
 
-      await dai.connect(bob).approve(vault.address, insureAmount);
+      await approveDepositAndWithdrawRequest({
+        token: dai,
+        target: market1,
+        depositor: alice,
+        amount: depositAmount,
+      });
 
       expect(await index.rate()).to.equal(rate_Index());
 
@@ -1504,11 +1494,11 @@ describe("Index", function () {
         amount: withdrawAmount,
       });
       //Harvested premium is reflected on their account balance
-      // await verifyBalance({
-      //   token: dai,
-      //   address: alice.address,
-      //   expectedBalance: u[alice.address].balance,
-      // });
+      await verifyBalance({
+        token: dai,
+        address: alice.address,
+        expectedBalance: u[alice.address].balance,
+      });
     });
 
     it("also transfers lockup period when iToken is transferred", async function () {
@@ -1550,18 +1540,18 @@ describe("Index", function () {
       await expect(index.connect(alice).withdraw(withdrawAmount)).to.revertedWith(
         "ERROR: WITHDRAWAL_EXCEEDED_REQUEST"
       );
-      // await index.connect(tom).withdraw(withdrawAmount);
+
       await withdraw({
         target: index,
         withdrawer: tom,
         amount: withdrawAmount,
       });
 
-      // await verifyBalance({
-      //   token: dai,
-      //   address: tom.address,
-      //   expectedBalance: u[tom.address].balance,
-      // });
+      await verifyBalance({
+        token: dai,
+        address: tom.address,
+        expectedBalance: u[tom.address].balance,
+      });
     });
 
     it("DISABLE deposit when paused(withdrawal is possible)", async function () {
@@ -1593,18 +1583,17 @@ describe("Index", function () {
 
       await moveForwardPeriods(8);
 
-      // await index.connect(alice).withdraw(withdrawAmount);
       await withdraw({
         target: index,
         withdrawer: alice,
         amount: withdrawAmount,
       });
 
-      // await verifyBalance({
-      //   token: dai,
-      //   address: alice.address,
-      //   expectedBalance: u[alice.address].balance,
-      // });
+      await verifyBalance({
+        token: dai,
+        address: alice.address,
+        expectedBalance: u[alice.address].balance,
+      });
     });
 
     it("DISABLE deposit and withdrawal when reporting or payingout", async function () {
@@ -1665,17 +1654,17 @@ describe("Index", function () {
         rate: rate_Index(),
       });
 
-      // await index.connect(alice).withdraw(withdrawAmount);
       await withdraw({
         target: index,
         withdrawer: alice,
         amount: withdrawAmount,
       });
-      // await verifyBalance({
-      //   token: dai,
-      //   address: alice.address,
-      //   expectedBalance: u[alice.address].balance,
-      // });
+
+      await verifyBalance({
+        token: dai,
+        address: alice.address,
+        expectedBalance: u[alice.address].balance,
+      });
     });
 
     it("devaluate underlying when cover claim is accepted", async function () {
@@ -1731,13 +1720,6 @@ describe("Index", function () {
         totalAttributions: v.totalAttributions,
       });
 
-      // await verifyVaultStatusOf_legacy({
-      //   vault: vault,
-      //   target: creator.address,
-      //   attributions: v.attributions[creator.address],
-      //   underlyingValue: underlyingValue(creator.address, v),
-      // })
-
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: market1.address,
@@ -1755,7 +1737,6 @@ describe("Index", function () {
 
       expect(await market1.totalLiquidity()).to.closeTo(totalLiquidity_Pool(market1.address), "1");
 
-      // await market1.connect(bob).redeem("0", proof);
       await redeem({
         pool: market1,
         redeemer: bob,
@@ -1906,7 +1887,7 @@ describe("Index", function () {
   });
 
   describe("Index parameter configurations (case un-equal allocation)", function () {
-    beforeEach(async () => {
+    before(async () => {
       //Deploy a new pool
       const PoolTemplate = await ethers.getContractFactory("PoolTemplate");
       await factory.createMarket(
@@ -1932,12 +1913,10 @@ describe("Index", function () {
         paused: false,
       };
 
-      if (v.attributions[market3.address])
-        v.totalAttributions = v.totalAttributions.sub(v.attributions[market3.address]);
       v.attributions[market3.address] = ZERO;
-      if (v.debts[market3.address])
-        v.totalDebt = v.totalDebt.sub(v.debts[market3.address]);
       v.debts[market3.address] = ZERO;
+
+      markets.push(market3);
     });
 
     it("allows new pool addition", async function () {
@@ -2184,7 +2163,7 @@ describe("Index", function () {
         withdrawable: withdrawable(), //un-utilized underwriting asset
         rate: rate_Index(),
       });
-      return;
+
       await verifyVaultStatus_legacy({
         vault: vault,
         valueAll: v.balance,
@@ -2197,7 +2176,7 @@ describe("Index", function () {
         attributions: v.attributions[index.address],
         underlyingValue: underlyingValue(index.address, v),
       });
-      return;
+
       await verifyPoolsStatus_legacy({
         pools: [
           {
@@ -2237,159 +2216,9 @@ describe("Index", function () {
           }
         ]
       });
-      return;
-      //after remomval
-      await index.set("2", market3.address, "0");
-
-      await verifyIndexStatus({
-        index: index,
-        totalSupply: m[index.address].totalSupply, //LP token
-        totalLiquidity: totalLiquidity_Index(), //underwriting asset
-        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
-        totalAllocPoint: m[index.address].totalAllocPoint,
-        targetLev: targetLev,
-        leverage: leverage(),
-        withdrawable: withdrawable(), //un-utilized underwriting asset
-        rate: rate_Index(),
-      });
-
-      await verifyVaultStatus_legacy({
-        vault: vault,
-        balance: 10000,
-        totalAttributions: 10000,
-      })
-
-      await verifyVaultStatusOf_legacy({
-        vault: vault,
-        target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
-
-      await verifyPoolsStatus_legacy({
-        pools: [
-          {
-            pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
-          },
-          {
-            pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
-          },
-          {
-            pool: market3,
-            totalLiquidity: 0,
-            availableBalance: 0
-          }
-        ]
-      })
-
-      await verifyPoolsStatusOf({
-        pools: [
-          {
-            pool: market1,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
-          },
-          {
-            pool: market2,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
-          },
-          {
-            pool: market3,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 0,
-          }
-        ]
-      })
-    });
-
-
-    it.skip("mimics pool removal if the pool is paused", async function () {
-      await index.set("2", market3.address, "1000");
-
-      await approveDeposit({
-        token: dai,
-        target: index,
-        depositor: alice,
-        amount: 10000
-      })
-
-      //before remomval
-
-      await verifyIndexStatus({
-        index: index,
-        totalSupply: m[index.address].totalSupply, //LP token
-        totalLiquidity: totalLiquidity_Index(), //underwriting asset
-        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
-        totalAllocPoint: m[index.address].totalAllocPoint,
-        targetLev: targetLev,
-        leverage: leverage(),
-        withdrawable: withdrawable(), //un-utilized underwriting asset
-        rate: rate_Index(),
-      });
-
-      await verifyVaultStatus_legacy({
-        vault: vault,
-        balance: 10000,
-        totalAttributions: 10000,
-      })
-
-      await verifyVaultStatusOf_legacy({
-        vault: vault,
-        target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
-
-      await verifyPoolsStatus_legacy({
-        pools: [
-          {
-            pool: market1,
-            totalLiquidity: 6666,
-            availableBalance: 6666
-          },
-          {
-            pool: market2,
-            totalLiquidity: 6666,
-            availableBalance: 6666
-          },
-          {
-            pool: market3,
-            totalLiquidity: 6666,
-            availableBalance: 6666
-          }
-        ]
-      })
-
-      await verifyPoolsStatusOf({
-        pools: [
-          {
-            pool: market1,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
-          },
-          {
-            pool: market2,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
-          },
-          {
-            pool: market3,
-            allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
-          }
-        ]
-      })
 
       //after remomval
-      await market3.setPaused(true);
-      await index.adjustAlloc();
-
-      expect(await market1.allocatedCredit(index.address)).to.equal("10000");
+      await set(2, market3.address, ZERO);
 
       await verifyIndexStatus({
         index: index,
@@ -2405,38 +2234,38 @@ describe("Index", function () {
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        balance: 10000,
-        totalAttributions: 10000,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 0,
-            availableBalance: 0
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
@@ -2457,14 +2286,164 @@ describe("Index", function () {
       });
     });
 
-    it.skip("allows leverage rate increment", async function () {
-      await index.set("2", market3.address, "1000");
+
+    it("mimics pool removal if the pool is paused", async function () {
+      await set(2, market3.address, allocPoint1);
 
       await approveDeposit({
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
+        amount: depositAmount,
+      });
+
+      //before remomval
+
+      await verifyIndexStatus({
+        index: index,
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
+      await verifyVaultStatus_legacy({
+        vault: vault,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
+      })
+
+      await verifyVaultStatusOf_legacy({
+        vault: vault,
+        target: index.address,
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
+
+      await verifyPoolsStatus_legacy({
+        pools: [
+          {
+            pool: market1,
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
+          },
+          {
+            pool: market2,
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
+          },
+          {
+            pool: market3,
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
+        ]
+      });
+
+      await verifyPoolsStatusForIndex_legacy({
+        pools: [
+          {
+            pool: market1,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market1.address].allocatedCredit,
+          },
+          {
+            pool: market2,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market2.address].allocatedCredit,
+          },
+          {
+            pool: market3,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market3.address].allocatedCredit,
+          }
+        ]
+      });
+
+      //after remomval
+      await market3.setPaused(true);
+      await adjustAlloc(totalLiquidity_Index());
+
+      expect(await market1.allocatedCredit(index.address)).to.equal(m[market1.address].allocatedCredit);
+
+      await verifyIndexStatus({
+        index: index,
+        totalSupply: m[index.address].totalSupply, //LP token
+        totalLiquidity: totalLiquidity_Index(), //underwriting asset
+        totalAllocatedCredit: m[index.address].totalAllocatedCredit,
+        totalAllocPoint: m[index.address].totalAllocPoint,
+        targetLev: targetLev,
+        leverage: leverage(),
+        withdrawable: withdrawable(), //un-utilized underwriting asset
+        rate: rate_Index(),
+      });
+
+      await verifyVaultStatus_legacy({
+        vault: vault,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
+      })
+
+      await verifyVaultStatusOf_legacy({
+        vault: vault,
+        target: index.address,
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
+
+      await verifyPoolsStatus_legacy({
+        pools: [
+          {
+            pool: market1,
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
+          },
+          {
+            pool: market2,
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
+          },
+          {
+            pool: market3,
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
+        ]
+      });
+
+      await verifyPoolsStatusForIndex_legacy({
+        pools: [
+          {
+            pool: market1,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market1.address].allocatedCredit,
+          },
+          {
+            pool: market2,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market2.address].allocatedCredit,
+          },
+          {
+            pool: market3,
+            allocatedCreditOf: index.address,
+            allocatedCredit: m[market3.address].allocatedCredit,
+          }
+        ]
+      });
+    });
+
+    it("allows leverage rate increment", async function () {
+      await set(2, market3.address, allocPoint1);
+
+      await approveDeposit({
+        token: dai,
+        target: index,
+        depositor: alice,
+        amount: depositAmount,
       })
 
       //lev 2.0
@@ -2482,61 +2461,62 @@ describe("Index", function () {
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        balance: 10000,
-        totalAttributions: 10000,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 6666,
-            availableBalance: 6666
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 6666,
-            availableBalance: 6666
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 6666,
-            availableBalance: 6666
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 6666,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
 
 
       //Lev3.0
-      await index.setLeverage("3000");
-      await index.adjustAlloc();
+      targetLev = BigNumber.from("3000");
+      await index.setLeverage(targetLev);
+      await adjustAlloc(totalLiquidity_Index());
 
       await verifyIndexStatus({
         index: index,
@@ -2552,67 +2532,68 @@ describe("Index", function () {
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        balance: 10000,
-        totalAttributions: 10000
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 10000,
-            availableBalance: 10000
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
-      await verifyPoolsStatusOf({
+      });
+
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
     });
 
-    it.skip("allows leverage rate decrement", async function () {
-      await index.set("2", market3.address, "1000");
+    it("allows leverage rate decrement", async function () {
+      await set(2, market3.address, allocPoint1);
 
-      await index.setLeverage("3000");
+      await index.setLeverage(targetLev);
       await approveDeposit({
         token: dai,
         target: index,
         depositor: alice,
-        amount: 10000
-      })
+        amount: depositAmount,
+      });
 
       //Lev3.0
       await verifyIndexStatus({
@@ -2629,70 +2610,77 @@ describe("Index", function () {
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        balance: 10000,
-        totalAttributions: 10000,
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10000,
-        underlyingValue: 10000
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 10000,
-            availableBalance: 10000
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 10000,
-            availableBalance: 10000
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
-      await verifyPoolsStatusOf({
+      });
+
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
+      });
 
       //Lev2.0 when liquidity is locked
       let currentTimestamp = BigNumber.from(
         (await ethers.provider.getBlock("latest")).timestamp
       );
       //let endTime = await currentTimestamp.add(86400 * 10);
-      await dai.connect(bob).approve(vault.address, 10000);
+      await approveDeposit({
+        token: dai,
+        target: market1,
+        depositor: alice,
+        amount: depositAmount,
+      });
+
       await insure({
         pool: market1,
         insurer: bob,
-        amount: 9999,
-        maxCost: 10000,
-        span: 86400 * 10,
-        target: '0x4e69636b00000000000000000000000000000000000000000000000000000000'
-      })
+        amount: insureAmount,
+        maxCost: insureAmount,
+        span: WEEK,
+        target: padded1
+      });
 
       await verifyIndexStatus({
         index: index,
@@ -2710,25 +2698,25 @@ describe("Index", function () {
         pools: [
           {
             pool: market1,
-            totalLiquidity: 10000,
-            availableBalance: 1
-          }
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 10000,
-          }
+            allocatedCredit: m[market1.address].allocatedCredit,
+          },
         ]
-      })
+      });
 
-
-      await index.setLeverage("2000"); //deleverage
-      await index.adjustAlloc();
+      targetLev = BigNumber.from("2000");
+      await index.setLeverage(targetLev); //deleverage
+      await adjustAlloc(totalLiquidity_Index());
 
       await verifyIndexStatus({
         index: index,
@@ -2744,61 +2732,60 @@ describe("Index", function () {
 
       await verifyVaultStatus_legacy({
         vault: vault,
-        balance: 10999,
-        totalAttributions: 10999
+        valueAll: v.balance,
+        totalAttributions: v.totalAttributions,
       })
 
       await verifyVaultStatusOf_legacy({
         vault: vault,
         target: index.address,
-        attributions: 10950,
-        underlyingValue: 10950
-      })
+        attributions: v.attributions[index.address],
+        underlyingValue: underlyingValue(index.address, v),
+      });
 
       await verifyPoolsStatus_legacy({
         pools: [
           {
             pool: market1,
-            totalLiquidity: 9999,
-            availableBalance: 0
+            totalLiquidity: totalLiquidity_Pool(market1.address),
+            availableBalance: availableBalance(market1.address, m[market1.address]),
           },
           {
             pool: market2,
-            totalLiquidity: 5950,
-            availableBalance: 5950
+            totalLiquidity: totalLiquidity_Pool(market2.address),
+            availableBalance: availableBalance(market2.address, m[market2.address]),
           },
           {
             pool: market3,
-            totalLiquidity: 5950,
-            availableBalance: 5950
-          }
+            totalLiquidity: totalLiquidity_Pool(market3.address),
+            availableBalance: availableBalance(market3.address, m[market3.address]),
+          },
         ]
-      })
+      });
 
-      await verifyPoolsStatusOf({
+      await verifyPoolsStatusForIndex_legacy({
         pools: [
           {
             pool: market1,
             allocatedCreditOf: index.address,
-            allocatedCredit: 9999,
+            allocatedCredit: m[market1.address].allocatedCredit,
           },
           {
             pool: market2,
             allocatedCreditOf: index.address,
-            allocatedCredit: 5950,
+            allocatedCredit: m[market2.address].allocatedCredit,
           },
           {
             pool: market3,
             allocatedCreditOf: index.address,
-            allocatedCredit: 5950,
+            allocatedCredit: m[market3.address].allocatedCredit,
           }
         ]
-      })
-
+      });
     });
   });
 
-  describe.skip("Admin functions", function () {
+  describe("Admin functions", function () {
     it("allows changing metadata", async function () {
       expect(await index.metadata()).to.equal("Here is metadata.");
       await index.changeMetadata("new metadata");
