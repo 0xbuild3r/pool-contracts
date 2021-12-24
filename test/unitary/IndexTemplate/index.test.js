@@ -106,6 +106,7 @@ describe("Index", function () {
 
   let v = {};
 
+  // Vault functions
   const addValueBatch = (amount, from, beneficiaries, shares, status) => {
     let ret = [];
     let attributions;
@@ -226,6 +227,10 @@ describe("Index", function () {
     return ZERO;
   }
 
+  const available = () => {
+    return v.balance.sub(v.totalDebt);
+  }
+
   const approveDeposit = async ({ token, target, depositor, amount }) => {
     await token.connect(depositor).approve(vault.address, amount);
     let tx = await target.connect(depositor).deposit(amount);
@@ -344,55 +349,38 @@ describe("Index", function () {
     }
   }
 
-  const adjustAlloc = async (liquidity) => {
-    const targetCredit = targetLev.mul(liquidity).div(MAGIC_SCALE_1E6);
-    let poolList = [];
-    let allocatable = targetCredit;
-    let allocatablePoints = m[`${index.address}`].totalAllocPoint;
-    let poolAddr, allocation, market, target, current, available, delta;
-    for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
-      poolAddr = m[`${index.address}`].poolList[i];
-      if (poolAddr !== ZERO_ADDRESS) {
-        allocation = m[`${poolAddr}`].allocPoint;
-        target = targetCredit.mul(allocation).div(allocatablePoints);
-        market = markets.find(market => market.address === poolAddr);
-        current = m[poolAddr].allocatedCredit;
-        available = availableBalance(poolAddr, m[poolAddr]);
-        if (current.gt(target) && current.sub(target).gt(available) || m[poolAddr].paused) {
-          withdrawCredit(available, index.address, m[poolAddr]);
-          m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(available);
-          allocatable = allocatable.sub(current).add(available);
-          allocatablePoints = allocatablePoints.sub(allocation);
-        } else {
-          poolList.push({
-            addr: poolAddr,
-            current: current,
-            available: available,
-            allocation: allocation,
-          });
-        }
+  // PoolTemplate Functions
+
+  const allocateCredit = (amount, from, status) => {
+    let pending;
+    if (status.allocatedCredit.gt(ZERO)) {
+      pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
+      if (pending.gt(ZERO)) {
+        transferAttribution(pending, from, index.address, v);
+        status.attributionDebt = status.attributionDebt.sub(pending);
       }
     }
+    if (amount.gt(ZERO)) {
+      status.totalCredit = status.totalCredit.add(amount);
+      status.allocatedCredit = status.allocatedCredit.add(amount);
+    }
 
-    for (let i = 0; i < poolList.length; i++) {
-      poolAddr = poolList[i].addr;
-      target = allocatable.mul(poolList[i].allocation).div(allocatablePoints);
-      market = markets.find(market => market.address === poolAddr);
-      current = poolList[i].current;
-      available = poolList[i].available;
-      if (current.gt(target) && !available.isZero()) {
-        delta = current.sub(target);
-        withdrawCredit(delta, index.address, m[poolAddr]);
-        m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(delta);
-      }
-      if (current.lt(target)) {
-        delta = target.sub(current);
-        allocateCredit(delta, index.address, m[poolAddr]);
-        m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.add(delta);
-      }
-      if (current.eq(target)) {
-        allocateCredit(ZERO, index.address, m[poolAddr]);
-      }
+    status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
+  }
+
+  const withdrawCredit = (amount, from, status) => {
+    let pending;
+    pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
+    if (amount.gt(ZERO)) {
+      status.totalCredit = status.totalCredit.sub(amount);
+      status.allocatedCredit = status.allocatedCredit.sub(amount);
+    }
+
+    if (pending.gt(ZERO)) {
+      transferAttribution(pending, from, index.address, v);
+      status.attributionDebt = status.attributionDebt.sub(pending);
+
+      status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
     }
   }
 
@@ -488,125 +476,6 @@ describe("Index", function () {
     })
   }
 
-  const accuredPremiums = () => {
-    let ret = ZERO;
-    let poolAddr;
-    for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
-      poolAddr = m[`${index.address}`].poolList[i];
-      ret.add(pendingPremium(poolAddr));
-    }
-
-    return ret;
-  }
-
-  const pendingPremium = (addr) => {
-    return m[addr].allocatedCredit.isZero() ? ZERO : m[addr].allocatedCredit.mul(m[addr].rewardPerCredit).div(MAGIC_SCALE_1E6).sub(m[addr].rewardDebt);
-  }
-
-  const withdrawable = () => {
-    if (leverage().gt(targetLev.add(upperSlack))) {
-      return ZERO;
-    } else {
-      let poolAddr;
-      let sum = ZERO;
-      for (let i = 0; i < m[index.address].poolList.length; i++) {
-        poolAddr = m[index.address].poolList[i];
-        if (m[poolAddr].allocPoint.gt(ZERO)) {
-          if (!totalLiquidity_Pool(poolAddr).isZero()) {
-            sum = sum.add(m[poolAddr].lockedAmount.mul(m[poolAddr].totalCredit).div(totalLiquidity_Pool(poolAddr)));
-          } else {
-            sum = sum.add(m[poolAddr].lockedAmount);
-          }
-        }
-      }
-
-      return totalLiquidity_Index().sub(sum);
-    }
-  }
-
-  const leverage = () => {
-    if (totalLiquidity_Index().gt(ZERO)) {
-      return m[`${index.address}`].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Index());
-    }
-
-    return ZERO;
-  }
-
-  const rate = () => {
-    if (totalLiquidity_Index().gt(ZERO)) {
-      return totalLiquidity_Index().mul(MAGIC_SCALE_1E6).div(m[`${index.address}`].totalSupply);
-    }
-
-    return ZERO;
-  }
-
-  const approveDepositAndWithdrawRequest = async ({ token, target, depositor, amount }) => {
-    await approveDeposit({ token, target, depositor, amount });
-    await target.connect(depositor).requestWithdraw(amount);
-  }
-
-  const compensate = async ({ target, compensator, amount }) => {
-    await target.connect(compensator).compensate(amount);
-
-    let ret;
-    const value = underlyingValue(target.address, v);
-    if (value.gte(amount)) {
-      offsetDebt(amount, target.address, compensator.address, v);
-      ret = amount;
-    } else {
-      if (totalLiquidity_Index().lt(amount)) {
-        const shortage = amount.sub(value);
-        const cds = ZERO;
-        ret = value.add(cds);
-      }
-      offsetDebt(ret, target.address, compensator.address, v);
-    }
-
-    adjustAlloc(totalLiquidity_Index());
-  }
-
-  const resume_Pool = async (market) => {
-    await market.resume();
-
-    const debt = v.debts[market.address];
-    const totalCredit = m[market.address].totalCredit;
-    const deductionFromIndex = debt.mul(totalCredit).mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(market.address));
-    const credit = m[market.address].allocatedCredit;
-    let actualDeduction = ZERO;
-    if (credit.gt(ZERO)) {
-      const shareOfIndex = credit.mul(MAGIC_SCALE_1E6).div(totalCredit);
-      const redeemAmount = divCeil(deductionFromIndex, shareOfIndex);
-      actualDeduction = await compensate({
-        target: index,
-        compensator: pool,
-        amount: redeemAmount,
-      });
-    }
-
-    const deductionFromPool = debt.sub(deductionFromIndex.div(MAGIC_SCALE_1E6));
-    const shortage = deductionFromIndex.div(MAGIC_SCALE_1E6).sub(actualDeduction);
-
-    if (deductionFromPool.gt(ZERO)) {
-      offsetDebt(deductionFromPool, market.address, market.address, v);
-    }
-
-    transferDebt(shortage, market.address, v);
-
-    await verifyDebtOf({
-      vault: vault,
-      target: market.address,
-      debt: v.debts[market.address],
-    })
-  }
-
-  const divCeil = (a, b) => {
-    const c = a.div(b);
-    if (!a.mod(b).isZero())
-      c = c.add(1);
-
-    return c;
-  }
-
   const applyCover = async ({ pool, pending, targetAddress, payoutNumerator, payoutDenominator, incidentTimestamp }) => {
 
     const padded1 = ethers.utils.hexZeroPad("0x1", 32);
@@ -653,6 +522,217 @@ describe("Index", function () {
     return proof
   }
 
+  const resume_Pool = async (market) => {
+    await market.resume();
+
+    const debt = v.debts[market.address];
+    const totalCredit = m[market.address].totalCredit;
+    const deductionFromIndex = debt.mul(totalCredit).mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(market.address));
+    const credit = m[market.address].allocatedCredit;
+    let actualDeduction = ZERO;
+    if (credit.gt(ZERO)) {
+      const shareOfIndex = credit.mul(MAGIC_SCALE_1E6).div(totalCredit);
+      const redeemAmount = divCeil(deductionFromIndex, shareOfIndex);
+      actualDeduction = await compensate({
+        target: index,
+        compensator: pool,
+        amount: redeemAmount,
+      });
+    }
+
+    const deductionFromPool = debt.sub(deductionFromIndex.div(MAGIC_SCALE_1E6));
+    const shortage = deductionFromIndex.div(MAGIC_SCALE_1E6).sub(actualDeduction);
+
+    if (deductionFromPool.gt(ZERO)) {
+      offsetDebt(deductionFromPool, market.address, market.address, v);
+    }
+
+    transferDebt(shortage, market.address, v);
+
+    await verifyDebtOf({
+      vault: vault,
+      target: market.address,
+      debt: v.debts[market.address],
+    })
+  }
+
+  const rate_Pool = (addr) => {
+    if (m[addr].totalSupply.gt(ZERO)) {
+      return originalLiquidity(addr).mul(MAGIC_SCALE_1E6).div(m[addr].totalSupply);
+    }
+
+    return ZERO;
+  }
+
+  const valueOfUnderlying_Pool = (poolAddr, ownerAddr) => {
+    const balance = u[`${ownerAddr}`].lp[poolAddr];
+    if (balance.isZero()) {
+      return ZERO;
+    }
+
+    return balance.mul(originalLiquidity(poolAddr)).div(m[poolAddr].totalSupply);
+  }
+
+  const pendingPremium = (addr) => {
+    return m[addr].allocatedCredit.isZero() ? ZERO : m[addr].allocatedCredit.mul(m[addr].rewardPerCredit).div(MAGIC_SCALE_1E6).sub(m[addr].rewardDebt);
+  }
+
+  const availableBalance = (addr, status) => {
+    if (totalLiquidity_Pool(addr).gt(ZERO)) {
+      return totalLiquidity_Pool(addr).sub(status.lockedAmount);
+    }
+
+    return ZERO;
+  }
+
+  const utilizationRate = (addr) => {
+    if (m[addr].lockedAmount.gt(ZERO)) {
+      return m[addr].lockedAmount.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(addr));
+    }
+
+    return ZERO;
+  }
+
+  const originalLiquidity = (addr) => {
+    return underlyingValue(addr, v).sub(attributionValue(m[addr].attributionDebt, v));
+  }
+
+  const totalLiquidity_Pool = (addr) => {
+    return originalLiquidity(addr).add(m[addr].totalCredit);
+  }
+
+  const divCeil = (a, b) => {
+    const c = a.div(b);
+    if (!a.mod(b).isZero())
+      c = c.add(1);
+
+    return c;
+  }
+
+  // IndexTemplate Functions
+
+  const withdrawable = () => {
+    if (leverage().gt(targetLev.add(upperSlack))) {
+      return ZERO;
+    } else {
+      let poolAddr;
+      let sum = ZERO;
+      for (let i = 0; i < m[index.address].poolList.length; i++) {
+        poolAddr = m[index.address].poolList[i];
+        if (m[poolAddr].allocPoint.gt(ZERO)) {
+          if (!totalLiquidity_Pool(poolAddr).isZero()) {
+            sum = sum.add(m[poolAddr].lockedAmount.mul(m[poolAddr].totalCredit).div(totalLiquidity_Pool(poolAddr)));
+          } else {
+            sum = sum.add(m[poolAddr].lockedAmount);
+          }
+        }
+      }
+
+      return totalLiquidity_Index().sub(sum);
+    }
+  }
+
+  const adjustAlloc = async (liquidity) => {
+    const targetCredit = targetLev.mul(liquidity).div(MAGIC_SCALE_1E6);
+    let poolList = [];
+    let allocatable = targetCredit;
+    let allocatablePoints = m[`${index.address}`].totalAllocPoint;
+    let poolAddr, allocation, market, target, current, available, delta;
+    for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
+      poolAddr = m[`${index.address}`].poolList[i];
+      if (poolAddr !== ZERO_ADDRESS) {
+        allocation = m[`${poolAddr}`].allocPoint;
+        target = targetCredit.mul(allocation).div(allocatablePoints);
+        market = markets.find(market => market.address === poolAddr);
+        current = m[poolAddr].allocatedCredit;
+        available = availableBalance(poolAddr, m[poolAddr]);
+        if (current.gt(target) && current.sub(target).gt(available) || m[poolAddr].paused) {
+          withdrawCredit(available, index.address, m[poolAddr]);
+          m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(available);
+          allocatable = allocatable.sub(current).add(available);
+          allocatablePoints = allocatablePoints.sub(allocation);
+        } else {
+          poolList.push({
+            addr: poolAddr,
+            current: current,
+            available: available,
+            allocation: allocation,
+          });
+        }
+      }
+    }
+
+    for (let i = 0; i < poolList.length; i++) {
+      poolAddr = poolList[i].addr;
+      target = allocatable.mul(poolList[i].allocation).div(allocatablePoints);
+      market = markets.find(market => market.address === poolAddr);
+      current = poolList[i].current;
+      available = poolList[i].available;
+      if (current.gt(target) && !available.isZero()) {
+        delta = current.sub(target);
+        withdrawCredit(delta, index.address, m[poolAddr]);
+        m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.sub(delta);
+      }
+      if (current.lt(target)) {
+        delta = target.sub(current);
+        allocateCredit(delta, index.address, m[poolAddr]);
+        m[`${index.address}`].totalAllocatedCredit = m[`${index.address}`].totalAllocatedCredit.add(delta);
+      }
+      if (current.eq(target)) {
+        allocateCredit(ZERO, index.address, m[poolAddr]);
+      }
+    }
+  }
+
+  const compensate = async ({ target, compensator, amount }) => {
+    await target.connect(compensator).compensate(amount);
+
+    let ret;
+    const value = underlyingValue(target.address, v);
+    if (value.gte(amount)) {
+      offsetDebt(amount, target.address, compensator.address, v);
+      ret = amount;
+    } else {
+      if (totalLiquidity_Index().lt(amount)) {
+        const shortage = amount.sub(value);
+        const cds = ZERO;
+        ret = value.add(cds);
+      }
+      offsetDebt(ret, target.address, compensator.address, v);
+    }
+
+    adjustAlloc(totalLiquidity_Index());
+  }
+
+  const leverage = () => {
+    if (totalLiquidity_Index().gt(ZERO)) {
+      return m[`${index.address}`].totalAllocatedCredit.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Index());
+    }
+
+    return ZERO;
+  }
+
+  const totalLiquidity_Index = () => {
+    return underlyingValue(index.address, v).add(accuredPremiums());
+  }
+
+  const rate_Index = () => {
+    if (m[index.address].totalSupply.gt(ZERO)) {
+      return totalLiquidity_Index().mul(MAGIC_SCALE_1E6).div(m[index.address].totalSupply);
+    }
+
+    return ZERO;
+  }
+
+  const valueOfUnderlying_Index = (ownerAddr) => {
+    const balance = u[`${ownerAddr}`].lp[index.address];
+    if (balance.isZero()) {
+      return ZERO;
+    }
+
+    return balance.mul(totalLiquidity_Index()).div(m[index.address].totalSupply);
+  }
+
   const set = async (id, addr, allocPoint) => {
     await index.set(id, addr, allocPoint);
 
@@ -676,103 +756,20 @@ describe("Index", function () {
     adjustAlloc(totalLiquidity_Index());
   }
 
-  const totalLiquidity_Index = () => {
-    return underlyingValue(index.address, v).add(accuredPremiums());
-  }
-
-  const originalLiquidity = (addr) => {
-    return underlyingValue(addr, v).sub(attributionValue(m[addr].attributionDebt, v));
-  }
-
-  const totalLiquidity_Pool = (addr) => {
-    return originalLiquidity(addr).add(m[addr].totalCredit);
-  }
-
-  const rate_Index = () => {
-    if (m[index.address].totalSupply.gt(ZERO)) {
-      return totalLiquidity_Index().mul(MAGIC_SCALE_1E6).div(m[index.address].totalSupply);
+  const accuredPremiums = () => {
+    let ret = ZERO;
+    let poolAddr;
+    for (let i = 0; i < m[`${index.address}`].poolList.length; i++) {
+      poolAddr = m[`${index.address}`].poolList[i];
+      ret.add(pendingPremium(poolAddr));
     }
 
-    return ZERO;
+    return ret;
   }
 
-  const rate_Pool = (addr) => {
-    if (m[addr].totalSupply.gt(ZERO)) {
-      return originalLiquidity(addr).mul(MAGIC_SCALE_1E6).div(m[addr].totalSupply);
-    }
-
-    return ZERO;
-  }
-
-  const valueOfUnderlying_Pool = (poolAddr, ownerAddr) => {
-    const balance = u[`${ownerAddr}`].lp[poolAddr];
-    if (balance.isZero()) {
-      return ZERO;
-    }
-
-    return balance.mul(originalLiquidity(poolAddr)).div(m[poolAddr].totalSupply);
-  }
-
-  const valueOfUnderlying_Index = (ownerAddr) => {
-    const balance = u[`${ownerAddr}`].lp[index.address];
-    if (balance.isZero()) {
-      return ZERO;
-    }
-
-    return balance.mul(totalLiquidity_Index()).div(m[index.address].totalSupply);
-  }
-
-  const utilizationRate = (addr) => {
-    if (m[addr].lockedAmount.gt(ZERO)) {
-      return m[addr].lockedAmount.mul(MAGIC_SCALE_1E6).div(totalLiquidity_Pool(addr));
-    }
-
-    return ZERO;
-  }
-
-  const availableBalance = (addr, status) => {
-    if (totalLiquidity_Pool(addr).gt(ZERO)) {
-      return totalLiquidity_Pool(addr).sub(status.lockedAmount);
-    }
-
-    return ZERO;
-  }
-
-  const available = () => {
-    return v.balance.sub(v.totalDebt);
-  }
-
-  const allocateCredit = (amount, from, status) => {
-    let pending;
-    if (status.allocatedCredit.gt(ZERO)) {
-      pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
-      if (pending.gt(ZERO)) {
-        transferAttribution(pending, from, index.address, v);
-        status.attributionDebt = status.attributionDebt.sub(pending);
-      }
-    }
-    if (amount.gt(ZERO)) {
-      status.totalCredit = status.totalCredit.add(amount);
-      status.allocatedCredit = status.allocatedCredit.add(amount);
-    }
-
-    status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
-  }
-
-  const withdrawCredit = (amount, from, status) => {
-    let pending;
-    pending = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6).sub(status.rewardDebt);
-    if (amount.gt(ZERO)) {
-      status.totalCredit = status.totalCredit.sub(amount);
-      status.allocatedCredit = status.allocatedCredit.sub(amount);
-    }
-
-    if (pending.gt(ZERO)) {
-      transferAttribution(pending, from, index.address, v);
-      status.attributionDebt = status.attributionDebt.sub(pending);
-
-      status.rewardDebt = status.allocatedCredit.mul(status.rewardPerCredit).div(MAGIC_SCALE_1E6);
-    }
+  const approveDepositAndWithdrawRequest = async ({ token, target, depositor, amount }) => {
+    await approveDeposit({ token, target, depositor, amount });
+    await target.connect(depositor).requestWithdraw(amount);
   }
 
   before('deploy & setup contracts', async () => {
@@ -1257,7 +1254,7 @@ describe("Index", function () {
         targetLev: targetLev,
         leverage: leverage(),
         withdrawable: withdrawable(), //un-utilized underwriting asset
-        rate: rate(),
+        rate: rate_Index(),
       });
 
       // //pool
@@ -1404,7 +1401,7 @@ describe("Index", function () {
         targetLev: targetLev,
         leverage: leverage(),
         withdrawable: withdrawable(), //un-utilized underwriting asset
-        rate: rate(),
+        rate: rate_Index(),
       });
 
       await moveForwardPeriods(8);
