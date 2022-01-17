@@ -273,7 +273,7 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
         uint256 _totalLiquidity = totalLiquidity();
         if(_totalLiquidity > 0){
             uint256 _length = poolList.length;
-            uint256 _lowestAvailableRate = MAGIC_SCALE_1E6;
+            uint256 _highestLockScore;
             uint256 _targetAllocPoint;
             uint256 _targetLockedCreditScore;
             //Check which pool has the lowest available rate and keep stats
@@ -287,11 +287,11 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                         .availableBalance();
                     //check if some portion of credit is locked
                     if (_allocated > _availableBalance) {
-                        uint256 _availableRate = (_availableBalance *
-                            MAGIC_SCALE_1E6) / _allocated;
                         uint256 _lockedCredit = _allocated - _availableBalance;
-                        if (i == 0 || _availableRate < _lowestAvailableRate) {
-                            _lowestAvailableRate = _availableRate;
+                        //We use a magic variable called lockScore, which detects how much credit is required for a allocPoint
+                        uint256 _lockScore = _lockedCredit * MAGIC_SCALE_1E6/ _allocPoint;
+                        if (_highestLockScore < _lockScore) {
+                            _highestLockScore = _lockScore;
                             _targetLockedCreditScore = _lockedCredit;
                             _targetAllocPoint = _allocPoint;
                         }
@@ -299,7 +299,7 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                 }
             }
             //Calculate the return value
-            if (_lowestAvailableRate == MAGIC_SCALE_1E6) {
+            if (_highestLockScore == 0) {
                 _retVal = _totalLiquidity;
             } else {
                 uint256 _necessaryAmount = _targetLockedCreditScore * totalAllocPoint /  _targetAllocPoint;
