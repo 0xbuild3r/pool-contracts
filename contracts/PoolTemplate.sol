@@ -697,8 +697,7 @@ contract PoolTemplate is InsureDAOERC20, IPoolTemplate, IUniversalMarket {
 
         uint256 _debt = vault.debts(address(this));
         uint256 _totalCredit = totalCredit;
-        uint256 _deductionFromIndex = (_debt * _totalCredit * MAGIC_SCALE_1E6) /
-            totalLiquidity();
+        uint256 _deductionFromIndex = _debt * _totalCredit / totalLiquidity();
         uint256 _actualDeduction;
         for (uint256 i = 0; i < indexList.length; i++) {
             address _index = indexList[i];
@@ -706,10 +705,7 @@ contract PoolTemplate is InsureDAOERC20, IPoolTemplate, IUniversalMarket {
             if (_credit > 0) {
                 uint256 _shareOfIndex = (_credit * MAGIC_SCALE_1E6) /
                     _totalCredit;
-                uint256 _redeemAmount = _divCeil(
-                    _deductionFromIndex,
-                    _shareOfIndex
-                );
+                uint256 _redeemAmount = _deductionFromIndex * _shareOfIndex / MAGIC_SCALE_1E6;
                 _actualDeduction += IIndexTemplate(_index).compensate(
                     _redeemAmount
                 );
@@ -717,10 +713,8 @@ contract PoolTemplate is InsureDAOERC20, IPoolTemplate, IUniversalMarket {
         }
 
         uint256 _deductionFromPool = _debt -
-            _deductionFromIndex /
-            MAGIC_SCALE_1E6;
-        uint256 _shortage = _deductionFromIndex /
-            MAGIC_SCALE_1E6 -
+            _deductionFromIndex;
+        uint256 _shortage = _deductionFromIndex  -
             _actualDeduction;
 
         if (_deductionFromPool > 0) {
