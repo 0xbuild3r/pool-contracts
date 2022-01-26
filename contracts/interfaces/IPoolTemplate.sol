@@ -1,6 +1,12 @@
 pragma solidity 0.8.7;
 
 abstract contract IPoolTemplate {
+
+    enum MarketStatus {
+        Trading,
+        Payingout
+    }
+
     function allocateCredit(uint256 _credit)
         external
         virtual
@@ -17,9 +23,12 @@ abstract contract IPoolTemplate {
         virtual
         returns (uint256 _retVal);
 
+    function marketStatus() external view virtual returns(MarketStatus);
+
     function availableBalance() public view virtual returns (uint256 _balance);
 
     function utilizationRate() public view virtual returns (uint256 _rate);
+    
     function totalLiquidity() public view virtual returns (uint256 _balance);
     function totalCredit() external view virtual returns (uint256);
     function lockedAmount() external view virtual returns (uint256);

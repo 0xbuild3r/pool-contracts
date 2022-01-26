@@ -360,14 +360,19 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                 uint256 _available = IPoolTemplate(_pool).availableBalance();
                 //if needed to withdraw credit but unable, then withdraw all available.
                 //Otherwise, skip.
-                if (
+                if(IPoolTemplate(_pool).marketStatus() == IPoolTemplate.MarketStatus.Payingout){
+                    totalAllocatedCredit -= _current;
+                    _poolList[i].addr = address(0);
+                    _allocatable = _safeMinus(_allocatable, _current);
+                    _allocatablePoints -= _allocation;
+                }else if (
                     (_current > _target && _current - _target > _available) ||
                     IPoolTemplate(_pool).paused() == true
                 ) {
                     IPoolTemplate(_pool).withdrawCredit(_available);
                     totalAllocatedCredit -= _available;
                     _poolList[i].addr = address(0);
-                    _allocatable -= _current - _available;
+                    _allocatable -= _safeMinus(_allocatable, _current);
                     _allocatablePoints -= _allocation;
                 } else {
                     _poolList[i].addr = _pool;
@@ -445,7 +450,7 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
             }
             vault.offsetDebt(_compensated, msg.sender);
         }
-        adjustAlloc();
+        
         emit Compensated(msg.sender, _compensated);
     }
 
@@ -465,7 +470,7 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                 "ERROR: POOL_IS_PAUSED"
             );
         }
-
+        adjustAlloc();
         locked = false;
         emit Resumed();
     }
@@ -605,6 +610,11 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                 uint256 _current = IPoolTemplate(_poolAddress).allocatedCredit(
                     address(this)
                 );
+                require(
+                    IPoolTemplate(_poolAddress).marketStatus() == IPoolTemplate.MarketStatus.Trading &&
+                    IPoolTemplate(_poolAddress).availableBalance() >= _current,
+                    "ERROR: CANNOT_EXIT_POOL"
+                );
                 IPoolTemplate(_poolAddress).withdrawCredit(_current);
             }
             poolList[_index] = _pool;
@@ -658,6 +668,18 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                     _totalValue +
                     IPoolTemplate(poolList[i]).pendingPremium(address(this));
             }
+        }
+    }
+    
+    /**
+     * @notice Overflow free minus function that returns zero
+     * @return _result result of the subtraction operation
+     */
+    function _safeMinus(uint256 _a, uint256 _b) internal pure returns (uint256 _result) {
+        if(_a >= _b){
+            _result = _a - _b;
+        }else{
+            _result = 0;
         }
     }
 }
