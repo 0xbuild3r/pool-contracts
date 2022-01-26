@@ -360,20 +360,35 @@ contract IndexTemplate is InsureDAOERC20, IIndexTemplate, IUniversalMarket {
                 uint256 _available = IPoolTemplate(_pool).availableBalance();
                 //if needed to withdraw credit but unable, then withdraw all available.
                 //Otherwise, skip.
-                if(IPoolTemplate(_pool).marketStatus() == IPoolTemplate.MarketStatus.Payingout){
+                if(
+                    IPoolTemplate(_pool).marketStatus() == IPoolTemplate.MarketStatus.Payingout
+                ){
                     totalAllocatedCredit -= _current;
                     _poolList[i].addr = address(0);
                     _allocatable = _safeMinus(_allocatable, _current);
                     _allocatablePoints -= _allocation;
-                }else if (
-                    (_current > _target && _current - _target > _available) ||
-                    IPoolTemplate(_pool).paused() == true
+                } else if (
+                    _current > _target && _current - _target > _available
                 ) {
                     IPoolTemplate(_pool).withdrawCredit(_available);
                     totalAllocatedCredit -= _available;
                     _poolList[i].addr = address(0);
                     _allocatable -= _safeMinus(_allocatable, _current);
                     _allocatablePoints -= _allocation;
+                } else if (IPoolTemplate(_pool).paused() == true){
+                    if(_current > _available){
+                        IPoolTemplate(_pool).withdrawCredit(_available);
+                        totalAllocatedCredit -= _available;
+                        _poolList[i].addr = address(0);
+                        _allocatable -= _safeMinus(_allocatable, _available);
+                        _allocatablePoints -= _allocation;
+                    } else {
+                        IPoolTemplate(_pool).withdrawCredit(_current);
+                        totalAllocatedCredit -= _current;
+                        _poolList[i].addr = address(0);
+                        _allocatable -= _safeMinus(_allocatable, _current);
+                        _allocatablePoints -= _allocation;
+                    }
                 } else {
                     _poolList[i].addr = _pool;
                     _poolList[i].current = _current;
