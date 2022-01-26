@@ -155,7 +155,7 @@ contract Vault is IVault {
                 underlyingValue(msg.sender) >= _amount,
             "ERROR_WITHDRAW-VALUE_BADCONDITOONS"
         );
-        _attributions = (totalAttributions * _amount) / valueAll();
+        _attributions = divRoundUp(totalAttributions * _amount, valueAll());
 
         attributions[msg.sender] -= _attributions;
         totalAttributions -= _attributions;
@@ -188,7 +188,7 @@ contract Vault is IVault {
                 underlyingValue(msg.sender) >= _amount,
             "ERROR_TRANSFER-VALUE_BADCONDITOONS"
         );
-        _attributions = (_amount * totalAttributions) / valueAll();
+        _attributions = divRoundUp(totalAttributions * _amount, valueAll());
         attributions[msg.sender] -= _attributions;
         attributions[_destination] += _attributions;
     }
@@ -221,7 +221,7 @@ contract Vault is IVault {
                 underlyingValue(msg.sender) >= _amount,
             "ERROR_REPAY_DEBT_BADCONDITOONS"
         );
-        _attributions = (_amount * totalAttributions) / valueAll();
+        _attributions = divRoundUp(totalAttributions * _amount, valueAll());
         attributions[msg.sender] -= _attributions;
         totalAttributions -= _attributions;
         balance -= _amount;
@@ -504,4 +504,14 @@ contract Vault is IVault {
             keeper = _keeper;
         }
     }
+
+    function divRoundUp(uint _a, uint _b) internal pure returns (uint256) {
+    require(_a >= _b, "ERROR: NUMERATOR_TOO_SMALL");
+    uint _c = _a/ _b;
+    if(_c * _b != _a){
+        _c += 1;
+    }
+    return _c;
+}
+
 }
